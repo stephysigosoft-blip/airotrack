@@ -297,17 +297,49 @@ class HistoryKilometerStatistics {
 class HistoryVehicleTiming {
   final String? vehicleStartTime;
   final String? vehicleEndTime;
+  /// Optional ready-made duration from API (seconds or `HH:MM:SS` text).
+  final String? totalDuration;
 
   const HistoryVehicleTiming({
     this.vehicleStartTime,
     this.vehicleEndTime,
+    this.totalDuration,
   });
 
   factory HistoryVehicleTiming.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const HistoryVehicleTiming();
+
+    String? pick(List<String> keys) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isEmpty || text.toLowerCase() == 'null') continue;
+        return text;
+      }
+      return null;
+    }
+
     return HistoryVehicleTiming(
-      vehicleStartTime: json['vehicle_start_time']?.toString(),
-      vehicleEndTime: json['vehicle_end_time']?.toString(),
+      vehicleStartTime: pick([
+        'vehicle_start_time',
+        'start_time',
+        'trip_start_time',
+        'start',
+      ]),
+      vehicleEndTime: pick([
+        'vehicle_end_time',
+        'end_time',
+        'trip_end_time',
+        'end',
+      ]),
+      totalDuration: pick([
+        'total_duration',
+        'duration',
+        'trip_duration',
+        'elapsed_time',
+        'running_duration',
+      ]),
     );
   }
 }

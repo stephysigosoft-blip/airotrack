@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:airotrack/Configs/ApiConfigs.dart';
 import 'package:airotrack/Models/HistoryModel.dart';
+import 'package:airotrack/Services/ReverseGeocodeService.dart';
 import 'package:airotrack/Utils/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -536,7 +537,7 @@ class _HistoryStopMarker extends StatelessWidget {
                     _detailRow(
                       'Address:',
                       (stop.address?.trim().isNotEmpty ?? false)
-                          ? stop.address!
+                          ? ReverseGeocodeService.withoutPincode(stop.address)
                           : 'Address unavailable',
                       maxLines: 2,
                     ),

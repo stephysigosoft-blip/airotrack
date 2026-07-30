@@ -20,17 +20,32 @@ class TrackView extends GetView<TrackController> {
         resizeToAvoidBottomInset: false,
         body: Stack(
           children: [
-            // 1. Map Background
-            AiroMapWidget(
-              key: ValueKey(controller.vehicleImei.value),
-              mapController: controller.mapController,
-              onTap: () => controller.showBottomSheet.value = false,
-              markers: controller.mapMarkers,
-              onPositionChanged: (position, hasGesture) {
-                if (hasGesture) {
-                  controller.onMapGesture();
-                }
-              },
+            // 1. Map Background — top-down overhead (north-up)
+            Obx(
+              () => AiroMapWidget(
+                key: ValueKey(
+                  '${controller.vehicleImei.value}-${controller.mapStyle.value}',
+                ),
+                mapController: controller.mapController,
+                initialZoom: 18,
+                mapStyle: controller.mapStyle.value,
+                lockNorthUp: true,
+                onTap: () => controller.showBottomSheet.value = false,
+                markers: controller.mapMarkers,
+                onPositionChanged: (position, hasGesture) {
+                  // Keep a true top-down view (never tilted / spun).
+                  if (position.rotation.abs() > 0.05) {
+                    controller.mapController.moveAndRotate(
+                      position.center,
+                      position.zoom,
+                      0,
+                    );
+                  }
+                  if (hasGesture) {
+                    controller.onMapGesture();
+                  }
+                },
+              ),
             ),
 
             // 2. Control Layout
@@ -76,12 +91,7 @@ class TrackView extends GetView<TrackController> {
                       _buildMapControl(
                         'lib/Asset/Icons/zoomin.png',
                         context,
-                        onTap: () {
-                          controller.mapController.move(
-                            controller.mapController.camera.center,
-                            controller.mapController.camera.zoom + 1,
-                          );
-                        },
+                        onTap: controller.zoomIn,
                       ),
                     ],
                   ),
@@ -93,7 +103,11 @@ class TrackView extends GetView<TrackController> {
                   right: width * 0.04,
                   child: Column(
                     children: [
-                      _buildMapControl('lib/Asset/Icons/map.png', context),
+                      _buildMapControl(
+                        'lib/Asset/Icons/map.png',
+                        context,
+                        onTap: controller.toggleMapStyle,
+                      ),
                       SizedBox(height: height * 0.012),
                       GestureDetector(
                         onTap: () => Get.to(() => const LockCommandView()),
@@ -124,23 +138,13 @@ class TrackView extends GetView<TrackController> {
                       _buildMapControl(
                         'lib/Asset/Icons/zoomin.png',
                         context,
-                        onTap: () {
-                          controller.mapController.move(
-                            controller.mapController.camera.center,
-                            controller.mapController.camera.zoom + 1,
-                          );
-                        },
+                        onTap: controller.zoomIn,
                       ),
                       SizedBox(height: height * 0.012),
                       _buildMapControl(
                         'lib/Asset/Icons/zoomout.png',
                         context,
-                        onTap: () {
-                          controller.mapController.move(
-                            controller.mapController.camera.center,
-                            controller.mapController.camera.zoom - 1,
-                          );
-                        },
+                        onTap: controller.zoomOut,
                       ),
                     ],
                   ),
@@ -315,9 +319,12 @@ class TrackView extends GetView<TrackController> {
 
   Widget _buildDraggableBottomSheet() {
     return DraggableScrollableSheet(
-      initialChildSize: 0.43,
-      minChildSize: 0.43,
-      maxChildSize: 1.0,
+      // Peek by default so the map stays dominant; drag up for full details.
+      initialChildSize: 0.20,
+      minChildSize: 0.18,
+      maxChildSize: 0.92,
+      snap: true,
+      snapSizes: const [0.20, 0.45, 0.92],
       builder: (context, scrollController) {
         final height = MediaQuery.of(context).size.height;
         final width = MediaQuery.of(context).size.width;
@@ -344,7 +351,7 @@ class TrackView extends GetView<TrackController> {
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   children: [
-                    SizedBox(height: height * 0.012),
+                    SizedBox(height: height * 0.008),
                     Center(
                       child: Container(
                         width: width * 0.11,
@@ -355,7 +362,7 @@ class TrackView extends GetView<TrackController> {
                         ),
                       ),
                     ),
-                    SizedBox(height: height * 0.018),
+                    SizedBox(height: height * 0.01),
 
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -368,13 +375,13 @@ class TrackView extends GetView<TrackController> {
                                 () => Text(
                                   controller.displayPlate,
                                   style: TextStyle(
-                                    fontSize: width * 0.046,
+                                    fontSize: width * 0.042,
                                     fontWeight: FontWeight.bold,
                                     color: Colors.black,
                                   ),
                                 ),
                               ),
-                              SizedBox(height: height * 0.01),
+                              SizedBox(height: height * 0.006),
                               Obx(() {
                                 // Digits under plate = position.odometer (8 columns)
                                 controller.odometerKm.value;
@@ -386,13 +393,13 @@ class TrackView extends GetView<TrackController> {
                                   ),
                                 );
                               }),
-                              const SizedBox(height: 15),
+                              SizedBox(height: height * 0.006),
                               Obx(
                                 () => Text(
                                   controller.displayDeviceTime,
                                   style: TextStyle(
                                     color: Colors.black,
-                                    fontSize: width * 0.032,
+                                    fontSize: width * 0.028,
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
@@ -402,8 +409,8 @@ class TrackView extends GetView<TrackController> {
                         ),
                         // Green Car Visualization
                         Container(
-                          width: width * 0.42,
-                          height: height * 0.13,
+                          width: width * 0.28,
+                          height: height * 0.07,
                           alignment: Alignment.centerRight,
                           child: Image.asset(
                             'lib/Asset/Images/Green Car.png',
@@ -412,7 +419,7 @@ class TrackView extends GetView<TrackController> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 25),
+                    const SizedBox(height: 12),
 
                     // Status Icons Box
                     Container(
@@ -675,14 +682,14 @@ class TrackView extends GetView<TrackController> {
                       ),
                     ),
 
-                    const SizedBox(height: 120),
+                    const SizedBox(height: 80),
                   ],
                 ),
               ),
             ),
-            // Speedometer floating above
+            // Speedometer floating above (over the small peek sheet)
             Positioned(
-              top: -height * 0.07,
+              top: -height * 0.055,
               left: 0,
               right: 0,
               child: Center(child: _buildSpeedometerIndicator()),

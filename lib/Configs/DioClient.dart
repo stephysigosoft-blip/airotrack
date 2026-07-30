@@ -37,7 +37,7 @@ class DioClient {
           final formData = options.data as FormData;
           print("➡️ DATA [FormData]:");
           for (var field in formData.fields) {
-            print("   ${field.key}: ${field.value}");
+            print("${field.key}: ${field.value}");
           }
           for (var file in formData.files) {
             print("   [File] ${file.key}: ${file.value.filename}");

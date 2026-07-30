@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:airotrack/Configs/ApiConfigs.dart';
 import 'package:airotrack/Configs/DioClient.dart';
 import 'package:airotrack/Models/HistoryModel.dart';
+import 'package:airotrack/Services/ReverseGeocodeService.dart';
 import 'package:airotrack/Utils/Utils.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -258,6 +259,10 @@ class HistoryController extends GetxController {
   var duration = "00:00:00".obs;
   /// From `kilometer_statistics.total_kilometers_traveled`.
   var totalDistance = "0.00 Km".obs;
+  /// From `stop_analysis.total_stops`.
+  var totalStops = "0".obs;
+  /// From `stop_analysis.total_stop_duration`.
+  var totalStopDuration = "0 h 0 m".obs;
   final vehicleStartTime = RxnString();
   final vehicleEndTime = RxnString();
 
@@ -434,6 +439,7 @@ class HistoryController extends GetxController {
 
   /// Set when controller is closed; prevents timer/async from touching state and avoids crashes.
   bool _disposed = false;
+  int _geocodeRunId = 0;
 
   static const LatLng _defaultMapCenter = LatLng(11.8745, 75.3704);
   static const double _defaultMapZoom = 13;
@@ -1251,6 +1257,7 @@ class HistoryController extends GetxController {
   @override
   void onClose() {
     _disposed = true;
+    _geocodeRunId++;
     stopMovingMarker();
     super.onClose();
   }
@@ -1355,7 +1362,7 @@ class HistoryController extends GetxController {
                 : null,
           ),
         );
-        _applyHistorySummaryStats(historyModel.data);
+        _applyHistorySummaryStats(historyModel.data, dataJson: dataJson);
         _applyStopLocationsFromResponse(dataJson);
         historyPreviewItems.assignAll(_buildHistoryPreview(responseBody));
         debugPrint(
@@ -1372,6 +1379,7 @@ class HistoryController extends GetxController {
           '[History] getHistory: rawPoints from isolate = ${rawPoints.length}',
         );
         _buildPlaybackSpeedSeries(rawPoints);
+        _applyDurationFallbackFromRawPoints(rawPoints);
         final cleanList = _applyPolylinePipeline(rawPoints);
         debugPrint(
           '[History] getHistory: pipeline cleanList = ${cleanList.length} points',
@@ -1415,6 +1423,8 @@ class HistoryController extends GetxController {
   void _resetHistorySummaryStats() {
     totalDistance.value = '0.00 Km';
     duration.value = '00:00:00';
+    totalStops.value = '0';
+    totalStopDuration.value = '0 h 0 m';
     vehicleStartTime.value = null;
     vehicleEndTime.value = null;
     stopLocations.clear();
@@ -1464,10 +1474,69 @@ class HistoryController extends GetxController {
     stops = _sortStopsChronologically(stops);
     stopLocations.assignAll(_numberStops(stops));
     _snapStopsToTraveledLine();
+    _resolveMissingStopAddresses();
+
+    final stopCount = analysis?.totalStops ?? stopLocations.length;
+    totalStops.value = '$stopCount';
+    final stopDur = analysis?.totalStopDuration;
+    if (stopDur != null) {
+      totalStopDuration.value =
+          HistoryStopLocation.formatDurationSeconds(stopDur);
+    } else if (stopLocations.isNotEmpty) {
+      // Sum parsed durations when API omits total_stop_duration.
+      totalStopDuration.value = '${stopLocations.length} stops';
+    } else {
+      totalStopDuration.value = '0 h 0 m';
+    }
+
     debugPrint(
       '[History] stop markers on map = ${stopLocations.length} '
       '(numbered 1..${stopLocations.length} by arrival time)',
     );
+  }
+
+  /// Reverse-geocode stops that only have coordinates (no API address).
+  Future<void> _resolveMissingStopAddresses() async {
+    final runId = ++_geocodeRunId;
+    final count = stopLocations.length;
+    if (count == 0) return;
+
+    debugPrint('[History] reverse-geocoding up to $count stop locations');
+    for (var i = 0; i < count; i++) {
+      if (_disposed || runId != _geocodeRunId) return;
+      if (i >= stopLocations.length) return;
+
+      final stop = stopLocations[i];
+      final existing = stop.address?.trim();
+      if (existing != null &&
+          existing.isNotEmpty &&
+          existing.toLowerCase() != 'null' &&
+          !_looksLikeRawCoordinates(existing)) {
+        continue;
+      }
+
+      final place = await ReverseGeocodeService.instance.reverse(
+        stop.latitude,
+        stop.longitude,
+      );
+      if (_disposed || runId != _geocodeRunId) return;
+      if (place == null || place.isEmpty) continue;
+      if (i >= stopLocations.length) return;
+
+      stopLocations[i] = stopLocations[i].copyWith(
+        address: ReverseGeocodeService.withoutPincode(place),
+      );
+      // Light pacing so Mapbox rate limits are less likely on long stop lists.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
+  bool _looksLikeRawCoordinates(String value) {
+    final parts = value.split(',');
+    if (parts.length != 2) return false;
+    final lat = double.tryParse(parts[0].trim());
+    final lng = double.tryParse(parts[1].trim());
+    return lat != null && lng != null;
   }
 
   /// Sort stops by arrival time (then departure). Ensures marker 1 is the first stop.
@@ -1696,8 +1765,11 @@ class HistoryController extends GetxController {
 
   /// Maps API summary blocks into bottom-sheet stats.
   /// - Distance ← `kilometer_statistics.total_kilometers_traveled`
-  /// - Duration ← elapsed between `vehicle_timing` start/end
-  void _applyHistorySummaryStats(HistoryData? data) {
+  /// - Duration ← `vehicle_timing` start/end, then location_history fallback
+  void _applyHistorySummaryStats(
+    HistoryData? data, {
+    Map<String, dynamic>? dataJson,
+  }) {
     final km = data?.kilometerStatistics?.totalKilometersTraveled;
     if (km == null) {
       totalDistance.value = '0.00 Km';
@@ -1705,8 +1777,9 @@ class HistoryController extends GetxController {
       totalDistance.value = '${km.toStringAsFixed(2)} Km';
     }
 
-    final startRaw = data?.vehicleTiming?.vehicleStartTime;
-    final endRaw = data?.vehicleTiming?.vehicleEndTime;
+    final timing = data?.vehicleTiming;
+    final startRaw = timing?.vehicleStartTime;
+    final endRaw = timing?.vehicleEndTime;
     vehicleStartTime.value =
         (startRaw != null && startRaw.trim().isNotEmpty && startRaw != 'null')
             ? startRaw.trim()
@@ -1716,16 +1789,141 @@ class HistoryController extends GetxController {
             ? endRaw.trim()
             : null;
 
-    duration.value = _formatVehicleTimingDuration(
+    // 1) Explicit duration field from API (seconds or HH:MM:SS).
+    final fromApiDuration = _formatFlexibleDuration(timing?.totalDuration);
+    if (fromApiDuration != null) {
+      duration.value = fromApiDuration;
+      debugPrint('[History] duration from vehicle_timing.total_duration=$fromApiDuration');
+      return;
+    }
+
+    // 2) Elapsed between vehicle_start_time → vehicle_end_time.
+    final fromTiming = _formatVehicleTimingDuration(
       vehicleStartTime.value,
       vehicleEndTime.value,
     );
+    if (fromTiming != '00:00:00') {
+      duration.value = fromTiming;
+      debugPrint(
+        '[History] duration from vehicle_timing '
+        '${vehicleStartTime.value} → ${vehicleEndTime.value} = $fromTiming',
+      );
+      return;
+    }
+
+    // 3) Fallback: first → last deviceTime in location_history.
+    final fromHistory = _durationFromLocationHistory(
+      dataJson?['location_history'],
+    );
+    if (fromHistory != null) {
+      duration.value = fromHistory;
+      debugPrint(
+        '[History] duration fallback from location_history = $fromHistory '
+        '(vehicle_timing start/end were null)',
+      );
+      return;
+    }
+
+    duration.value = '00:00:00';
+    debugPrint(
+      '[History] duration unavailable: vehicle_timing='
+      '${dataJson?['vehicle_timing']} location_history empty/missing times',
+    );
+  }
+
+  /// When timing is still zero after load, use sorted GPS point times.
+  void _applyDurationFallbackFromRawPoints(List<Map<String, dynamic>> raw) {
+    if (duration.value != '00:00:00') return;
+    if (raw.length < 2) return;
+
+    DateTime? minT;
+    DateTime? maxT;
+    String? firstRaw;
+    String? lastRaw;
+    for (final point in raw) {
+      final t = point['deviceTime']?.toString();
+      if (t == null || t.trim().isEmpty || t == 'null') continue;
+      final parsed = _parseDeviceTime(t);
+      if (parsed.year <= 1970) continue;
+      if (minT == null || parsed.isBefore(minT)) {
+        minT = parsed;
+        firstRaw = t;
+      }
+      if (maxT == null || parsed.isAfter(maxT)) {
+        maxT = parsed;
+        lastRaw = t;
+      }
+    }
+    if (firstRaw == null || lastRaw == null) return;
+
+    final formatted = _formatVehicleTimingDuration(firstRaw, lastRaw);
+    if (formatted == '00:00:00') return;
+
+    duration.value = formatted;
+    vehicleStartTime.value ??= firstRaw.trim();
+    vehicleEndTime.value ??= lastRaw.trim();
+    debugPrint(
+      '[History] duration from raw GPS points $firstRaw → $lastRaw = $formatted',
+    );
+  }
+
+  String? _durationFromLocationHistory(dynamic raw) {
+    if (raw is! List || raw.isEmpty) return null;
+
+    DateTime? minT;
+    DateTime? maxT;
+    String? firstRaw;
+    String? lastRaw;
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final t = (map['devicetime'] ??
+              map['device_time'] ??
+              map['deviceTime'] ??
+              map['created_at'])
+          ?.toString();
+      if (t == null || t.trim().isEmpty || t.toLowerCase() == 'null') continue;
+      final parsed = _parseDeviceTime(t);
+      if (parsed.year <= 1970) continue;
+      if (minT == null || parsed.isBefore(minT)) {
+        minT = parsed;
+        firstRaw = t;
+      }
+      if (maxT == null || parsed.isAfter(maxT)) {
+        maxT = parsed;
+        lastRaw = t;
+      }
+    }
+    if (firstRaw == null || lastRaw == null) return null;
+
+    final formatted = _formatVehicleTimingDuration(firstRaw, lastRaw);
+    if (formatted == '00:00:00') return null;
+
+    vehicleStartTime.value ??= firstRaw.trim();
+    vehicleEndTime.value ??= lastRaw.trim();
+    return formatted;
+  }
+
+  /// Accepts seconds (num/string) or already-formatted `HH:MM:SS` / `H h M m`.
+  String? _formatFlexibleDuration(String? raw) {
+    if (raw == null) return null;
+    final text = raw.trim();
+    if (text.isEmpty || text.toLowerCase() == 'null') return null;
+    if (text.contains(':')) return text;
+    final asNum = num.tryParse(text);
+    if (asNum == null) return text;
+    final totalSeconds = asNum.round().clamp(0, 24 * 3600 * 30);
+    final h = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
+    final m = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$h:$m:$s';
   }
 
   String _formatVehicleTimingDuration(String? startRaw, String? endRaw) {
     if (startRaw == null || endRaw == null) return '00:00:00';
     final start = _parseDeviceTime(startRaw);
     final end = _parseDeviceTime(endRaw);
+    if (start.year <= 1970 || end.year <= 1970) return '00:00:00';
     if (end.isBefore(start)) return '00:00:00';
     final totalSeconds = end.difference(start).inSeconds;
     final h = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
