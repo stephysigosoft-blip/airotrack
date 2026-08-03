@@ -820,7 +820,7 @@ class TrackController extends GetxController {
           );
         }
 
-        if (_disposed) return;
+      if (_disposed) return;
         // Ignore only if a newer fetch already started AND we already have a path.
         if (requestId != _routeRequestId && _roadQueue.length >= 2) return;
         if (road.length < 2) {

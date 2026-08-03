@@ -26,6 +26,8 @@ class HistoryData {
   final HistoryVehicleTiming? vehicleTiming;
   final HistorySpeedStatistics? speedStatistics;
   final HistoryStopAnalysis? stopAnalysis;
+  /// Segment list from `vehicle__history` (ignition_off / trip).
+  final List<HistoryVehicleHistoryItem>? vehicleHistory;
 
   const HistoryData({
     this.vehicleInfo,
@@ -34,11 +36,14 @@ class HistoryData {
     this.vehicleTiming,
     this.speedStatistics,
     this.stopAnalysis,
+    this.vehicleHistory,
   });
 
   factory HistoryData.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const HistoryData();
     final rawList = json['location_history'];
+    final rawVehicleHistory =
+        json['vehicle__history'] ?? json['vehicle_history'];
     return HistoryData(
       vehicleInfo: json['vehicle_info'] != null
           ? VehicleInfo.fromJson(
@@ -73,6 +78,16 @@ class HistoryData {
           ? HistoryStopAnalysis.fromJson(
               json['stop_analysis'] as Map<String, dynamic>,
             )
+          : null,
+      vehicleHistory: rawVehicleHistory is List
+          ? rawVehicleHistory
+              .whereType<Map>()
+              .map(
+                (e) => HistoryVehicleHistoryItem.fromJson(
+                  Map<String, dynamic>.from(e),
+                ),
+              )
+              .toList()
           : null,
     );
   }
@@ -111,6 +126,194 @@ class HistoryStopAnalysis {
           : num.tryParse(duration?.toString() ?? ''),
       stopLocations: stops,
     );
+  }
+}
+
+/// One segment from `vehicle__history` (`ignition_off` or `trip`).
+class HistoryVehicleHistoryItem {
+  /// Start position (`start_latitude` / `start_longitude`).
+  final double startLatitude;
+  final double startLongitude;
+  /// End position (`end_latitude` / `end_longitude`).
+  final double endLatitude;
+  final double endLongitude;
+  final String? startTime;
+  final String? endTime;
+  final String? duration;
+  final String type;
+  final String? speed;
+  final num? totalKm;
+  /// Reverse-geocoded place at start coords.
+  final String? startAddress;
+  /// Reverse-geocoded place at end coords (trips).
+  final String? endAddress;
+  /// Index among ignition_off map markers (null for trips).
+  final int? mapMarkerIndex;
+
+  const HistoryVehicleHistoryItem({
+    this.startLatitude = 0,
+    this.startLongitude = 0,
+    this.endLatitude = 0,
+    this.endLongitude = 0,
+    this.startTime,
+    this.endTime,
+    this.duration,
+    this.type = 'unknown',
+    this.speed,
+    this.totalKm,
+    this.startAddress,
+    this.endAddress,
+    this.mapMarkerIndex,
+  });
+
+  /// Back-compat aliases used by map markers.
+  double get latitude => startLatitude;
+  double get longitude => startLongitude;
+  String? get address => startAddress;
+
+  bool get isIgnitionOff =>
+      type == 'ignition_off' || type == 'stop' || type == 'ignitionoff';
+
+  bool get isTrip => type == 'trip' || type == 'moving';
+
+  static bool _isValidCoord(double lat, double lng) =>
+      lat.abs() <= 90 &&
+      lng.abs() <= 180 &&
+      !(lat == 0 && lng == 0);
+
+  bool get hasValidStartCoordinates =>
+      _isValidCoord(startLatitude, startLongitude);
+
+  bool get hasValidEndCoordinates =>
+      _isValidCoord(endLatitude, endLongitude);
+
+  bool get hasValidCoordinates => hasValidStartCoordinates;
+
+  HistoryVehicleHistoryItem copyWith({
+    double? startLatitude,
+    double? startLongitude,
+    double? endLatitude,
+    double? endLongitude,
+    String? startTime,
+    String? endTime,
+    String? duration,
+    String? type,
+    String? speed,
+    num? totalKm,
+    String? startAddress,
+    String? endAddress,
+    int? mapMarkerIndex,
+  }) {
+    return HistoryVehicleHistoryItem(
+      startLatitude: startLatitude ?? this.startLatitude,
+      startLongitude: startLongitude ?? this.startLongitude,
+      endLatitude: endLatitude ?? this.endLatitude,
+      endLongitude: endLongitude ?? this.endLongitude,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      duration: duration ?? this.duration,
+      type: type ?? this.type,
+      speed: speed ?? this.speed,
+      totalKm: totalKm ?? this.totalKm,
+      startAddress: startAddress ?? this.startAddress,
+      endAddress: endAddress ?? this.endAddress,
+      mapMarkerIndex: mapMarkerIndex ?? this.mapMarkerIndex,
+    );
+  }
+
+  factory HistoryVehicleHistoryItem.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const HistoryVehicleHistoryItem();
+    }
+
+    double? parseCoord(dynamic v) {
+      if (v is num) return v.toDouble();
+      return double.tryParse(v?.toString() ?? '');
+    }
+
+    String? pickString(List<String> keys) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isEmpty || text.toLowerCase() == 'null') continue;
+        return text;
+      }
+      return null;
+    }
+
+    final startLat = parseCoord(
+          json['start_latitude'] ??
+              json['start_lat'] ??
+              json['latitude'] ??
+              json['lat'],
+        ) ??
+        0.0;
+    final startLng = parseCoord(
+          json['start_longitude'] ??
+              json['start_lng'] ??
+              json['start_lon'] ??
+              json['longitude'] ??
+              json['lng'] ??
+              json['lon'],
+        ) ??
+        0.0;
+    final endLat = parseCoord(
+          json['end_latitude'] ?? json['end_lat'],
+        ) ??
+        startLat;
+    final endLng = parseCoord(
+          json['end_longitude'] ?? json['end_lng'] ?? json['end_lon'],
+        ) ??
+        startLng;
+
+    final typeRaw = pickString(['type', 'segment_type', 'mode']) ?? 'unknown';
+    final totalKmRaw =
+        json['total_km'] ?? json['total_kilometers'] ?? json['distance'];
+
+    return HistoryVehicleHistoryItem(
+      startLatitude: startLat,
+      startLongitude: startLng,
+      endLatitude: endLat,
+      endLongitude: endLng,
+      startTime: pickString(['start_time', 'start', 'arrival_time']),
+      endTime: pickString(['end_time', 'end', 'departure_time']),
+      duration: pickString(['duration', 'duration_text']),
+      type: typeRaw.toLowerCase().trim(),
+      speed: pickString(['speed', 'max_speed', 'maximum_speed']),
+      totalKm: totalKmRaw is num
+          ? totalKmRaw
+          : num.tryParse(totalKmRaw?.toString() ?? ''),
+      startAddress: pickString([
+        'start_address',
+        'address',
+        'location',
+        'place',
+      ]),
+      endAddress: pickString(['end_address']),
+    );
+  }
+
+  /// Formats API `HH:MM:SS` (or seconds) to `X hr Y min Zs`.
+  static String formatDurationDisplay(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return '–';
+    final text = raw.trim();
+    final parts = text.split(':');
+    if (parts.length == 3) {
+      final h = int.tryParse(parts[0]) ?? 0;
+      final m = int.tryParse(parts[1]) ?? 0;
+      final s = int.tryParse(parts[2]) ?? 0;
+      return '$h hr $m min ${s}s';
+    }
+    final asNum = num.tryParse(text);
+    if (asNum != null) {
+      final total = asNum.round();
+      final h = total ~/ 3600;
+      final m = (total % 3600) ~/ 60;
+      final s = total % 60;
+      return '$h hr $m min ${s}s';
+    }
+    return text;
   }
 }
 

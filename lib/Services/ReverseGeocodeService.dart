@@ -18,9 +18,9 @@ class ReverseGeocodeService {
   final Map<String, String> _cache = <String, String>{};
 
   static String _cacheKey(double lat, double lng) =>
-      '${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
+      'v2:${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
 
-  /// Keeps area + city only — strips pincode, state, and country (e.g. India).
+  /// Keeps area + city + state — strips pincode and country (e.g. India).
   static String withoutPincode(String? raw) {
     if (raw == null) return '';
     var text = raw.trim();
@@ -39,7 +39,7 @@ class ReverseGeocodeService {
       '',
     );
 
-    // Drop country.
+    // Drop country only.
     text = text.replaceAll(
       RegExp(r'(?:,\s*)?\bIndia\b\.?', caseSensitive: false),
       '',
@@ -49,12 +49,13 @@ class ReverseGeocodeService {
         .split(',')
         .map((p) => p.trim())
         .where((p) => p.isNotEmpty)
-        .where((p) => !_isCountryOrState(p))
+        .where((p) => !_isCountry(p))
         .toList();
 
-    if (parts.length > 2) {
-      // Keep area + city only.
-      text = '${parts[parts.length - 2]}, ${parts.last}';
+    if (parts.length > 3) {
+      // Keep area, city, state (last three meaningful segments).
+      text =
+          '${parts[parts.length - 3]}, ${parts[parts.length - 2]}, ${parts.last}';
     } else {
       text = parts.join(', ');
     }
@@ -66,36 +67,16 @@ class ReverseGeocodeService {
         .trim();
   }
 
-  static bool _isCountryOrState(String value) {
-    const blocked = <String>{
-      'india',
-      'in',
-      'kerala',
-      'tamil nadu',
-      'karnataka',
-      'maharashtra',
-      'andhra pradesh',
-      'telangana',
-      'delhi',
-      'gujarat',
-      'rajasthan',
-      'west bengal',
-      'uttar pradesh',
-      'madhya pradesh',
-      'punjab',
-      'haryana',
-      'odisha',
-      'bihar',
-      'assam',
-      'goa',
-    };
+  static bool _isCountry(String value) {
+    const blocked = <String>{'india', 'in'};
     return blocked.contains(value.trim().toLowerCase());
   }
 
-  /// Build "Area, City" from Mapbox feature context (no state/country/pincode).
+  /// Build "Area, City, State" from Mapbox feature context.
   static String? _placeFromFeature(Map<dynamic, dynamic> feature) {
     String? area;
     String? city;
+    String? state;
 
     final context = feature['context'];
     if (context is List) {
@@ -107,12 +88,13 @@ class ReverseGeocodeService {
 
         if (id.startsWith('postcode.') ||
             id.startsWith('postalcode.') ||
-            id.startsWith('country.') ||
-            id.startsWith('region.')) {
+            id.startsWith('country.')) {
           continue;
         }
 
-        if (id.startsWith('place.')) {
+        if (id.startsWith('region.')) {
+          state ??= name;
+        } else if (id.startsWith('place.')) {
           city ??= name;
         } else if (id.startsWith('neighborhood.') ||
             id.startsWith('locality.') ||
@@ -122,14 +104,16 @@ class ReverseGeocodeService {
       }
     }
 
-    // Feature itself may be the area/city/poi.
+    // Feature itself may be the area/city/poi/region.
     final placeTypes = feature['place_type'];
     final primary = feature['text']?.toString().trim();
     if (primary != null && primary.isNotEmpty) {
       final types = placeTypes is List
           ? placeTypes.map((e) => e.toString()).toList()
           : const <String>[];
-      if (types.any((t) => t == 'place')) {
+      if (types.any((t) => t == 'region')) {
+        state ??= primary;
+      } else if (types.any((t) => t == 'place')) {
         city ??= primary;
       } else if (types.any(
         (t) =>
@@ -148,6 +132,12 @@ class ReverseGeocodeService {
     final parts = <String>[];
     if (area != null && area.isNotEmpty) parts.add(area);
     if (city != null && city.isNotEmpty && city != area) parts.add(city);
+    if (state != null &&
+        state.isNotEmpty &&
+        state != city &&
+        state != area) {
+      parts.add(state);
+    }
 
     if (parts.isNotEmpty) {
       return withoutPincode(parts.join(', '));
@@ -158,7 +148,7 @@ class ReverseGeocodeService {
     return withoutPincode(placeName);
   }
 
-  /// Returns "Area, City" (no pincode / India), or null if lookup fails.
+  /// Returns "Area, City, State" (no pincode / India), or null if lookup fails.
   Future<String?> reverse(double latitude, double longitude) async {
     if (!latitude.isFinite || !longitude.isFinite) return null;
     if (latitude == 0 && longitude == 0) return null;
@@ -179,7 +169,7 @@ class ReverseGeocodeService {
         '?access_token=$token'
         '&limit=1'
         '&language=en'
-        '&types=address,poi,neighborhood,locality,place,district';
+        '&types=address,poi,neighborhood,locality,place,district,region';
 
     try {
       final response = await _dio.get<Map<String, dynamic>>(url);

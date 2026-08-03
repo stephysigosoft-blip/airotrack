@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 import 'package:airotrack/Utils/app_colors.dart';
 import 'package:airotrack/Models/HistoryModel.dart';
 import 'package:airotrack/Services/ReverseGeocodeService.dart';
 import '../../controllers/history_controller.dart';
 import 'history_icon_stat.dart';
 import 'history_playback_controls.dart';
-import 'history_row_detail.dart';
-import 'history_dashed_line.dart';
-import 'history_section_divider.dart';
 
 class HistoryBottomSheet extends StatelessWidget {
   final ScrollController scrollController;
@@ -54,7 +52,7 @@ class HistoryBottomSheet extends StatelessWidget {
             child: CircularProgressIndicator(color: AppColors.primaryBlue),
           );
         }
-        final stops = controller.stopLocations;
+        final items = controller.vehicleHistoryItems;
         return CustomScrollView(
           controller: scrollController,
           slivers: [
@@ -171,12 +169,12 @@ class HistoryBottomSheet extends StatelessWidget {
                 ],
               ),
             ),
-            if (stops.isEmpty)
+            if (items.isEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: height * 0.03),
                   child: Text(
-                    'No stops for selected dates',
+                    'No history for selected dates',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: width * 0.035,
@@ -189,37 +187,24 @@ class HistoryBottomSheet extends StatelessWidget {
               SliverPadding(
                 padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                 sliver: Obx(() {
-                  final selected = controller.selectedStopIndex.value;
+                  final selected =
+                      controller.selectedVehicleHistoryIndex.value;
                   return SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                        final stop = stops[index];
+                        final item = items[index];
                         final isSelected = selected == index;
                         return Padding(
-                          padding: EdgeInsets.only(bottom: height * 0.012),
-                          child: Material(
-                            color: isSelected
-                                ? const Color(0xFFE8F7FC)
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(12),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
-                              onTap: () => controller.selectStop(index),
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: width * 0.01,
-                                  vertical: height * 0.008,
-                                ),
-                                child: _StopAnalysisItem(
-                                  stop: stop,
-                                  stopNumber: stop.index ?? (index + 1),
-                                ),
-                              ),
-                            ),
+                          padding: EdgeInsets.only(bottom: height * 0.014),
+                          child: _VehicleHistoryCard(
+                            item: item,
+                            selected: isSelected,
+                            onTap: () =>
+                                controller.selectVehicleHistoryItem(index),
                           ),
                         );
                       },
-                      childCount: stops.length,
+                      childCount: items.length,
                     ),
                   );
                 }),
@@ -232,105 +217,311 @@ class HistoryBottomSheet extends StatelessWidget {
   }
 }
 
-class _StopAnalysisItem extends StatelessWidget {
-  final HistoryStopLocation stop;
-  final int stopNumber;
+class _VehicleHistoryCard extends StatelessWidget {
+  final HistoryVehicleHistoryItem item;
+  final bool selected;
+  final VoidCallback onTap;
 
-  const _StopAnalysisItem({
-    required this.stop,
-    required this.stopNumber,
+  const _VehicleHistoryCard({
+    required this.item,
+    required this.selected,
+    required this.onTap,
+  });
+
+  static final _displayFormat = DateFormat('hh:mm:ss a - dd MMM, yyyy');
+  static final _parseFormats = <DateFormat>[
+    DateFormat('yyyy-MM-dd HH:mm:ss'),
+    DateFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    DateFormat('dd MMM yyyy HH:mm:ss'),
+  ];
+
+  String _formatTime(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return '–';
+    final text = raw.trim();
+    DateTime? parsed = DateTime.tryParse(text);
+    if (parsed == null) {
+      for (final format in _parseFormats) {
+        try {
+          parsed = format.parse(text);
+          break;
+        } catch (_) {}
+      }
+    }
+    if (parsed == null) return text;
+    return _displayFormat.format(parsed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isTrip = item.isTrip;
+    final bg = isTrip ? const Color(0xFFE8F8EE) : const Color(0xFFFFEBEE);
+    final badgeBg = isTrip ? const Color(0xFFC8E6C9) : Colors.red;
+    final badgeFg = isTrip ? const Color(0xFF2E7D32) : Colors.white;
+    final badgeLabel = isTrip ? 'Trip' : 'Ignition off';
+    final startLocationText = _locationLabel(
+      address: item.startAddress,
+      hasCoords: item.hasValidStartCoordinates,
+    );
+    final endLocationText = _locationLabel(
+      address: item.endAddress,
+      hasCoords: item.hasValidEndCoordinates,
+    );
+
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(14),
+      elevation: selected ? 2 : 0,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (isTrip)
+                _TripHeader(item: item, badgeBg: badgeBg, badgeFg: badgeFg)
+              else
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeBg,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      badgeLabel,
+                      style: TextStyle(
+                        color: badgeFg,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              _TimeRow(
+                icon: Icons.play_arrow,
+                label: isTrip ? 'Started:' : 'Parked at:',
+                value: _formatTime(item.startTime),
+              ),
+              const SizedBox(height: 8),
+              _LocationLine(
+                text: startLocationText,
+                resolved: item.startAddress?.trim().isNotEmpty == true,
+              ),
+              const Divider(height: 18, thickness: 0.6),
+              _TimeRow(
+                icon: Icons.access_time,
+                label: 'Duration:',
+                value: HistoryVehicleHistoryItem.formatDurationDisplay(
+                  item.duration,
+                ),
+              ),
+              const Divider(height: 18, thickness: 0.6),
+              _TimeRow(
+                icon: Icons.stop,
+                label: isTrip ? 'Stopped:' : 'Moved at:',
+                value: _formatTime(item.endTime),
+              ),
+              if (isTrip) ...[
+                const SizedBox(height: 8),
+                _LocationLine(
+                  text: endLocationText,
+                  resolved: item.endAddress?.trim().isNotEmpty == true,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _locationLabel({required String? address, required bool hasCoords}) {
+    final text = address?.trim();
+    if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+      return ReverseGeocodeService.withoutPincode(text);
+    }
+    if (hasCoords) return 'Fetching location…';
+    return 'Location unavailable';
+  }
+}
+
+class _LocationLine extends StatelessWidget {
+  final String text;
+  final bool resolved;
+
+  const _LocationLine({
+    required this.text,
+    required this.resolved,
   });
 
   @override
   Widget build(BuildContext context) {
-    final hasAddress =
-        stop.address != null &&
-        stop.address!.trim().isNotEmpty &&
-        stop.address!.toLowerCase() != 'null';
-    final locationText = hasAddress
-        ? ReverseGeocodeService.withoutPincode(stop.address)
-        : 'Fetching location…';
-    final showAddress = locationText.isNotEmpty && hasAddress;
-
-    return Column(
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Container(
-              width: 28,
-              height: 28,
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                color: Color(0xFF009FE3),
-                shape: BoxShape.circle,
-              ),
-              child: Text(
-                '$stopNumber',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,  
-                  fontSize: 13,
+        Icon(
+          Icons.location_on_outlined,
+          size: 16,
+          color: Colors.grey.shade700,
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: resolved ? Colors.black87 : Colors.grey,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TripHeader extends StatelessWidget {
+  final HistoryVehicleHistoryItem item;
+  final Color badgeBg;
+  final Color badgeFg;
+
+  const _TripHeader({
+    required this.item,
+    required this.badgeBg,
+    required this.badgeFg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final km = item.totalKm;
+    final distanceText = km == null
+        ? 'Distance: –'
+        : 'Distance: ${km.toStringAsFixed(2)} Km';
+    final speedRaw = item.speed?.trim();
+    final speedText = (speedRaw == null || speedRaw.isEmpty)
+        ? 'Max speed: –'
+        : 'Max speed: $speedRaw km/h';
+
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Icon(Icons.directions_run, size: 16, color: Colors.grey.shade700),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  distanceText,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          decoration: BoxDecoration(
+            color: badgeBg,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            'Trip',
+            style: TextStyle(
+              color: badgeFg,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                showAddress ? locationText : 'Fetching location…',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: showAddress ? Colors.black87 : Colors.grey,
+          ),
+        ),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Icon(Icons.speed, size: 16, color: Colors.grey.shade700),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  speedText,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TimeRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _TimeRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.grey.shade400),
+          ),
+          child: Icon(icon, size: 16, color: Colors.grey.shade700),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+              height: 1.25,
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.red.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                'Ignition off',
-                style: TextStyle(
-                  color: Colors.red.shade700,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ],
+            textAlign: TextAlign.right,
+            softWrap: true,
+          ),
         ),
-        const SizedBox(height: 8),
-        const HistoryDashedLine(),
-        const SizedBox(height: 8),
-        HistoryRowDetail(
-          icon: Icons.play_circle_outline,
-          label: 'Arrival:',
-          value: stop.arrivalTime ?? '–',
-        ),
-        const SizedBox(height: 8),
-        const HistoryDashedLine(),
-        const SizedBox(height: 8),
-        HistoryRowDetail(
-          icon: Icons.access_time,
-          label: 'Duration:',
-          value: stop.duration ?? '–',
-        ),
-        const SizedBox(height: 8),
-        const HistoryDashedLine(),
-        const SizedBox(height: 8),
-        HistoryRowDetail(
-          icon: Icons.stop_circle_outlined,
-          label: 'Departure:',
-          value: stop.departureTime ?? '–',
-        ),
-        const SizedBox(height: 16),
-        const HistorySectionDivider(),
-        const SizedBox(height: 8),
       ],
     );
   }

@@ -268,7 +268,10 @@ class HistoryController extends GetxController {
 
   /// Stops from `stop_analysis.stop_locations` — numbered markers on the route.
   final stopLocations = <HistoryStopLocation>[].obs;
+  /// Segments from `vehicle__history` (ignition_off + trip) for the bottom sheet.
+  final vehicleHistoryItems = <HistoryVehicleHistoryItem>[].obs;
   final selectedStopIndex = RxnInt();
+  final selectedVehicleHistoryIndex = RxnInt();
   final showStopMarkers = true.obs;
 
   final MapController mapController = MapController();
@@ -339,15 +342,44 @@ class HistoryController extends GetxController {
   void selectStop(int index) {
     if (index < 0) {
       selectedStopIndex.value = null;
+      selectedVehicleHistoryIndex.value = null;
       return;
     }
     if (index >= stopLocations.length) return;
+    final next = selectedStopIndex.value == index ? null : index;
+    selectedStopIndex.value = next;
+    if (next == null) {
+      selectedVehicleHistoryIndex.value = null;
+      return;
+    }
+    // Sync list selection to matching ignition_off card.
+    final match = vehicleHistoryItems.indexWhere(
+      (e) => e.isIgnitionOff && e.mapMarkerIndex == next,
+    );
+    selectedVehicleHistoryIndex.value = match >= 0 ? match : null;
+  }
+
+  void selectVehicleHistoryItem(int index) {
+    if (index < 0 || index >= vehicleHistoryItems.length) {
+      selectedVehicleHistoryIndex.value = null;
+      selectedStopIndex.value = null;
+      return;
+    }
+    final next =
+        selectedVehicleHistoryIndex.value == index ? null : index;
+    selectedVehicleHistoryIndex.value = next;
+    if (next == null) {
+      selectedStopIndex.value = null;
+      return;
+    }
+    final item = vehicleHistoryItems[next];
     selectedStopIndex.value =
-        selectedStopIndex.value == index ? null : index;
+        item.isIgnitionOff ? item.mapMarkerIndex : null;
   }
 
   void clearSelectedStop() {
     selectedStopIndex.value = null;
+    selectedVehicleHistoryIndex.value = null;
   }
 
   static final _dateFormat = DateFormat('dd MMM yyyy');
@@ -1428,82 +1460,234 @@ class HistoryController extends GetxController {
     vehicleStartTime.value = null;
     vehicleEndTime.value = null;
     stopLocations.clear();
+    vehicleHistoryItems.clear();
     selectedStopIndex.value = null;
+    selectedVehicleHistoryIndex.value = null;
   }
 
   void _applyStopLocationsFromResponse(Map<String, dynamic> dataJson) {
     selectedStopIndex.value = null;
+    selectedVehicleHistoryIndex.value = null;
 
-    final analysisMap = dataJson['stop_analysis'];
-    HistoryStopAnalysis? analysis;
-    if (analysisMap is Map) {
-      analysis = HistoryStopAnalysis.fromJson(
-        Map<String, dynamic>.from(analysisMap),
-      );
-    }
-
-    var stops = List<HistoryStopLocation>.from(
-      analysis?.stopLocations ?? const <HistoryStopLocation>[],
-    );
-
-    // Log raw stop payload shape to diagnose field-name mismatches.
-    final rawStops = analysisMap is Map ? analysisMap['stop_locations'] : null;
-    if (rawStops is List) {
-      debugPrint(
-        '[History] stop_analysis.total_stops=${analysis?.totalStops} '
-        'raw stop_locations=${rawStops.length} parsed=${stops.length}',
-      );
-      if (rawStops.isNotEmpty && stops.isEmpty) {
-        final first = rawStops.first;
-        debugPrint(
-          '[History] stop_locations[0] keys='
-          '${first is Map ? Map<String, dynamic>.from(first).keys.toList() : first.runtimeType}',
+    // Prefer new `vehicle__history` segments for the bottom sheet list.
+    final rawVehicleHistory =
+        dataJson['vehicle__history'] ?? dataJson['vehicle_history'];
+    final segments = <HistoryVehicleHistoryItem>[];
+    if (rawVehicleHistory is List) {
+      for (final item in rawVehicleHistory) {
+        if (item is! Map) continue;
+        segments.add(
+          HistoryVehicleHistoryItem.fromJson(Map<String, dynamic>.from(item)),
         );
       }
     }
+    debugPrint(
+      '[History] vehicle__history segments = ${segments.length}',
+    );
 
-    // Fallback: build numbered stops from location_history is_stopped / mode=S clusters.
-    if (stops.isEmpty) {
-      stops = _deriveStopsFromLocationHistory(dataJson['location_history']);
-      debugPrint(
-        '[History] derived stop markers from location_history = ${stops.length}',
-      );
+    // Map markers: ignition_off points from vehicle__history, else stop_analysis.
+    var stops = <HistoryStopLocation>[];
+    final numberedSegments = <HistoryVehicleHistoryItem>[];
+    var markerIndex = 0;
+    if (segments.isNotEmpty) {
+      for (final segment in segments) {
+        if (segment.isIgnitionOff && segment.hasValidCoordinates) {
+          numberedSegments.add(
+            segment.copyWith(mapMarkerIndex: markerIndex),
+          );
+          stops.add(
+            HistoryStopLocation(
+              latitude: segment.startLatitude,
+              longitude: segment.startLongitude,
+              arrivalTime: segment.startTime,
+              departureTime: segment.endTime,
+              duration: segment.duration,
+              address: segment.startAddress,
+              index: markerIndex + 1,
+            ),
+          );
+          markerIndex++;
+        } else {
+          numberedSegments.add(segment);
+        }
+      }
+      vehicleHistoryItems.assignAll(numberedSegments);
+    } else {
+      vehicleHistoryItems.clear();
     }
 
-    // Chronological order: earliest arrival = 1, next = 2, ...
-    stops = _sortStopsChronologically(stops);
+    if (stops.isEmpty) {
+      final analysisMap = dataJson['stop_analysis'];
+      HistoryStopAnalysis? analysis;
+      if (analysisMap is Map) {
+        analysis = HistoryStopAnalysis.fromJson(
+          Map<String, dynamic>.from(analysisMap),
+        );
+      }
+
+      stops = List<HistoryStopLocation>.from(
+        analysis?.stopLocations ?? const <HistoryStopLocation>[],
+      );
+
+      final rawStops =
+          analysisMap is Map ? analysisMap['stop_locations'] : null;
+      if (rawStops is List) {
+        debugPrint(
+          '[History] stop_analysis.total_stops=${analysis?.totalStops} '
+          'raw stop_locations=${rawStops.length} parsed=${stops.length}',
+        );
+      }
+
+      if (stops.isEmpty) {
+        stops = _deriveStopsFromLocationHistory(dataJson['location_history']);
+        debugPrint(
+          '[History] derived stop markers from location_history = ${stops.length}',
+        );
+      }
+
+      // Legacy UI: if no vehicle__history, show stop_analysis as ignition_off cards.
+      if (vehicleHistoryItems.isEmpty && stops.isNotEmpty) {
+        vehicleHistoryItems.assignAll(
+          stops.map(
+            (s) => HistoryVehicleHistoryItem(
+              startLatitude: s.latitude,
+              startLongitude: s.longitude,
+              endLatitude: s.latitude,
+              endLongitude: s.longitude,
+              startTime: s.arrivalTime,
+              endTime: s.departureTime,
+              duration: s.duration,
+              type: 'ignition_off',
+              startAddress: s.address,
+              mapMarkerIndex: (s.index ?? 1) - 1,
+            ),
+          ),
+        );
+      }
+
+      final stopCount = analysis?.totalStops ?? stops.length;
+      totalStops.value = '$stopCount';
+      final stopDur = analysis?.totalStopDuration;
+      if (stopDur != null) {
+        totalStopDuration.value =
+            HistoryStopLocation.formatDurationSeconds(stopDur);
+      } else if (stops.isNotEmpty) {
+        totalStopDuration.value = '${stops.length} stops';
+      } else {
+        totalStopDuration.value = '0 h 0 m';
+      }
+    } else {
+      final ignitionCount =
+          vehicleHistoryItems.where((e) => e.isIgnitionOff).length;
+      totalStops.value = '$ignitionCount';
+      totalStopDuration.value = '$ignitionCount stops';
+    }
+
+    // Keep vehicle__history order for map markers so list ↔ marker indices stay aligned.
+    if (segments.isEmpty) {
+      stops = _sortStopsChronologically(stops);
+    }
     stopLocations.assignAll(_numberStops(stops));
     _snapStopsToTraveledLine();
-    _resolveMissingStopAddresses();
-
-    final stopCount = analysis?.totalStops ?? stopLocations.length;
-    totalStops.value = '$stopCount';
-    final stopDur = analysis?.totalStopDuration;
-    if (stopDur != null) {
-      totalStopDuration.value =
-          HistoryStopLocation.formatDurationSeconds(stopDur);
-    } else if (stopLocations.isNotEmpty) {
-      // Sum parsed durations when API omits total_stop_duration.
-      totalStopDuration.value = '${stopLocations.length} stops';
-    } else {
-      totalStopDuration.value = '0 h 0 m';
-    }
+    _resolveVehicleHistoryAddresses();
 
     debugPrint(
-      '[History] stop markers on map = ${stopLocations.length} '
-      '(numbered 1..${stopLocations.length} by arrival time)',
+      '[History] bottom sheet segments = ${vehicleHistoryItems.length}, '
+      'map stop markers = ${stopLocations.length}',
     );
   }
 
-  /// Reverse-geocode stops that only have coordinates (no API address).
-  Future<void> _resolveMissingStopAddresses() async {
+  /// Reverse-geocode vehicle__history segments (and sync ignition_off map markers).
+  Future<void> _resolveVehicleHistoryAddresses() async {
     final runId = ++_geocodeRunId;
+    final count = vehicleHistoryItems.length;
+    if (count == 0) {
+      await _resolveMissingStopAddresses(runId: runId);
+      return;
+    }
+
+    debugPrint('[History] reverse-geocoding $count vehicle__history segments');
+    for (var i = 0; i < count; i++) {
+      if (_disposed || runId != _geocodeRunId) return;
+      if (i >= vehicleHistoryItems.length) return;
+
+      var item = vehicleHistoryItems[i];
+      String? startAddress = item.startAddress?.trim();
+      String? endAddress = item.endAddress?.trim();
+
+      final needsStart = startAddress == null ||
+          startAddress.isEmpty ||
+          startAddress.toLowerCase() == 'null' ||
+          _looksLikeRawCoordinates(startAddress);
+      final needsEnd = item.isTrip &&
+          (endAddress == null ||
+              endAddress.isEmpty ||
+              endAddress.toLowerCase() == 'null' ||
+              _looksLikeRawCoordinates(endAddress));
+
+      if (needsStart && item.hasValidStartCoordinates) {
+        final place = await ReverseGeocodeService.instance.reverse(
+          item.startLatitude,
+          item.startLongitude,
+        );
+        if (_disposed || runId != _geocodeRunId) return;
+        if (place != null && place.isNotEmpty) {
+          startAddress = ReverseGeocodeService.withoutPincode(place);
+        }
+      } else if (!needsStart) {
+        startAddress = ReverseGeocodeService.withoutPincode(startAddress);
+      }
+
+      if (needsEnd && item.hasValidEndCoordinates) {
+        final place = await ReverseGeocodeService.instance.reverse(
+          item.endLatitude,
+          item.endLongitude,
+        );
+        if (_disposed || runId != _geocodeRunId) return;
+        if (place != null && place.isNotEmpty) {
+          endAddress = ReverseGeocodeService.withoutPincode(place);
+        }
+      } else if (!needsEnd && endAddress != null && endAddress.isNotEmpty) {
+        endAddress = ReverseGeocodeService.withoutPincode(endAddress);
+      }
+
+      if (i >= vehicleHistoryItems.length) return;
+      item = vehicleHistoryItems[i].copyWith(
+        startAddress: startAddress,
+        endAddress: endAddress,
+      );
+      vehicleHistoryItems[i] = item;
+      if (startAddress != null && startAddress.isNotEmpty) {
+        _syncAddressToStopMarker(item, startAddress);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+  }
+
+  void _syncAddressToStopMarker(HistoryVehicleHistoryItem item, String address) {
+    final markerIndex = item.mapMarkerIndex;
+    if (markerIndex == null) return;
+    if (markerIndex < 0 || markerIndex >= stopLocations.length) return;
+    final current = stopLocations[markerIndex].address?.trim();
+    if (current != null &&
+        current.isNotEmpty &&
+        current.toLowerCase() != 'null' &&
+        !_looksLikeRawCoordinates(current)) {
+      return;
+    }
+    stopLocations[markerIndex] =
+        stopLocations[markerIndex].copyWith(address: address);
+  }
+
+  /// Reverse-geocode stops that only have coordinates (no API address).
+  Future<void> _resolveMissingStopAddresses({int? runId}) async {
+    final activeRunId = runId ?? ++_geocodeRunId;
     final count = stopLocations.length;
     if (count == 0) return;
 
     debugPrint('[History] reverse-geocoding up to $count stop locations');
     for (var i = 0; i < count; i++) {
-      if (_disposed || runId != _geocodeRunId) return;
+      if (_disposed || activeRunId != _geocodeRunId) return;
       if (i >= stopLocations.length) return;
 
       final stop = stopLocations[i];
@@ -1519,14 +1703,13 @@ class HistoryController extends GetxController {
         stop.latitude,
         stop.longitude,
       );
-      if (_disposed || runId != _geocodeRunId) return;
+      if (_disposed || activeRunId != _geocodeRunId) return;
       if (place == null || place.isEmpty) continue;
       if (i >= stopLocations.length) return;
 
       stopLocations[i] = stopLocations[i].copyWith(
         address: ReverseGeocodeService.withoutPincode(place),
       );
-      // Light pacing so Mapbox rate limits are less likely on long stop lists.
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
