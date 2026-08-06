@@ -44,6 +44,7 @@ import '../modules/settings/bindings/add_expense_binding.dart';
 import '../modules/settings/bindings/change_password_binding.dart';
 import '../modules/settings/bindings/delete_account_binding.dart';
 import '../modules/settings/bindings/general_settings_binding.dart';
+import '../modules/settings/bindings/geofence_binding.dart';
 import '../modules/settings/views/edit_profile_view.dart';
 import '../modules/settings/views/raise_ticket_view.dart';
 import '../modules/settings/views/support_ticket_view.dart';
@@ -52,6 +53,8 @@ import '../modules/settings/views/configure_alerts_view.dart';
 import '../modules/settings/views/expenses_view.dart';
 import '../modules/settings/views/add_expense_view.dart';
 import '../modules/settings/views/general_settings_view.dart';
+import '../modules/settings/views/geofence_list_view.dart';
+import '../modules/settings/views/settings_add_geofence_view.dart';
 import '../modules/settings/views/delete_account_view.dart';
 import '../modules/settings/views/delete_success_view.dart';
 import '../modules/track/bindings/track_binding.dart';
@@ -215,6 +218,16 @@ class AppPages {
       name: Routes.GENERAL_SETTINGS,
       page: () => const GeneralSettingsView(),
       binding: GeneralSettingsBinding(),
+    ),
+    GetPage(
+      name: Routes.GEOFENCE,
+      page: () => const GeofenceListView(),
+      binding: GeofenceBinding(),
+    ),
+    GetPage(
+      name: Routes.SETTINGS_ADD_GEOFENCE,
+      page: () => const SettingsAddGeofenceView(),
+      binding: GeofenceBinding(),
     ),
     GetPage(
       name: Routes.DELETE_ACCOUNT,

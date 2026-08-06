@@ -140,6 +140,11 @@ class SettingsView extends GetView<SettingsController> {
               onTap: () => Get.toNamed(Routes.GENERAL_SETTINGS),
             ),
             _buildSettingTile(
+              iconPath: 'lib/Asset/Images/geofence_icon.png',
+              label: 'Geofence',
+              onTap: () => Get.toNamed(Routes.GEOFENCE),
+            ),
+            _buildSettingTile(
               iconPath: 'lib/Asset/Icons/Raise ticket.png',
               label: 'Raise Ticket',
               onTap: () => Get.toNamed(Routes.RAISE_TICKET),

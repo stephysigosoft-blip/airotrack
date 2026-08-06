@@ -29,6 +29,8 @@ abstract class Routes {
   static const EXPENSES = '/expenses';
   static const ADD_EXPENSE = '/add-expense';
   static const GENERAL_SETTINGS = '/general-settings';
+  static const GEOFENCE = '/geofence';
+  static const SETTINGS_ADD_GEOFENCE = '/settings-add-geofence';
   static const DELETE_ACCOUNT = '/delete-account';
   static const DELETE_SUCCESS = '/delete-success';
   static const TRACK = '/track';

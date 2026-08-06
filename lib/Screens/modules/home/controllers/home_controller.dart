@@ -211,9 +211,14 @@ class HomeController extends GetxController {
         final data = response.data['data'];
         if (data['vehicles_data'] != null) {
           final List<dynamic> vehiclesList = data['vehicles_data'];
-          vehicles.value = vehiclesList
-              .map((json) => Vehicle.fromJson(json))
-              .toList();
+          vehicles.value = _uniqueVehicles(
+            vehiclesList.map((json) => Vehicle.fromJson(json)).toList(),
+          );
+          // No more pages when first page is shorter than the page size.
+          hasMore.value = vehiclesList.length >= 20;
+        } else {
+          vehicles.clear();
+          hasMore.value = false;
         }
         if (data['statistics'] != null) {
           final stats = data['statistics'];
@@ -251,9 +256,10 @@ class HomeController extends GetxController {
   }
 
   Future<void> loadMoreVehicles() async {
+    if (isLoading.value || isMoreLoading.value || !hasMore.value) return;
     try {
       isMoreLoading.value = true;
-      currentPage++;
+      final nextPage = currentPage + 1;
 
       final response = await DioClient().get(
         ApiEndPoints.home,
@@ -261,7 +267,7 @@ class HomeController extends GetxController {
           'type': selectedType.value != null
               ? selectedType.value.toString()
               : '',
-          'page': currentPage.toString(),
+          'page': nextPage.toString(),
           'limit': '20',
         },
       );
@@ -277,10 +283,16 @@ class HomeController extends GetxController {
             final newVehicles = vehiclesList
                 .map((json) => Vehicle.fromJson(json))
                 .toList();
-            vehicles.addAll(newVehicles);
-
-            if (newVehicles.length < 20) {
+            final unique = _dedupeVehicles(newVehicles);
+            if (unique.isEmpty) {
+              // API repeated page-1 vehicles — stop paging.
               hasMore.value = false;
+            } else {
+              vehicles.addAll(unique);
+              currentPage = nextPage;
+              if (newVehicles.length < 20) {
+                hasMore.value = false;
+              }
             }
           }
         } else {
@@ -294,6 +306,27 @@ class HomeController extends GetxController {
     } finally {
       isMoreLoading.value = false;
     }
+  }
+
+  /// Keeps only vehicles not already in [vehicles] (by id, else IMEI/plate).
+  List<Vehicle> _dedupeVehicles(List<Vehicle> incoming) {
+    final existingKeys = <String>{};
+    for (final v in vehicles) {
+      existingKeys.add(_vehicleKey(v));
+    }
+    return incoming.where((v) => existingKeys.add(_vehicleKey(v))).toList();
+  }
+
+  /// Dedupes within a single page response.
+  List<Vehicle> _uniqueVehicles(List<Vehicle> incoming) {
+    final seen = <String>{};
+    return incoming.where((v) => seen.add(_vehicleKey(v))).toList();
+  }
+
+  String _vehicleKey(Vehicle v) {
+    if (v.id != 0) return 'id:${v.id}';
+    if (v.deviceId.trim().isNotEmpty) return 'imei:${v.deviceId.trim()}';
+    return 'plate:${v.plateNumber.trim().toLowerCase()}';
   }
 
   void changeTab(int index) {
