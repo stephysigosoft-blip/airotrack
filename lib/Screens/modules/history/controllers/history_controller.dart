@@ -1598,6 +1598,8 @@ class HistoryController extends GetxController {
   }
 
   /// Reverse-geocode vehicle__history segments (and sync ignition_off map markers).
+  /// Prefers Mapbox place for exact start/end coordinates over API address text
+  /// so labels stay accurate and consistent.
   Future<void> _resolveVehicleHistoryAddresses() async {
     final runId = ++_geocodeRunId;
     final count = vehicleHistoryItems.length;
@@ -1615,39 +1617,47 @@ class HistoryController extends GetxController {
       String? startAddress = item.startAddress?.trim();
       String? endAddress = item.endAddress?.trim();
 
-      final needsStart = startAddress == null ||
-          startAddress.isEmpty ||
-          startAddress.toLowerCase() == 'null' ||
-          _looksLikeRawCoordinates(startAddress);
-      final needsEnd = item.isTrip &&
-          (endAddress == null ||
-              endAddress.isEmpty ||
-              endAddress.toLowerCase() == 'null' ||
-              _looksLikeRawCoordinates(endAddress));
-
-      if (needsStart && item.hasValidStartCoordinates) {
+      if (item.hasValidStartCoordinates) {
         final place = await ReverseGeocodeService.instance.reverse(
           item.startLatitude,
           item.startLongitude,
         );
         if (_disposed || runId != _geocodeRunId) return;
         if (place != null && place.isNotEmpty) {
-          startAddress = ReverseGeocodeService.withoutPincode(place);
+          startAddress = place;
+        } else if (startAddress != null &&
+            startAddress.isNotEmpty &&
+            startAddress.toLowerCase() != 'null' &&
+            !_looksLikeRawCoordinates(startAddress)) {
+          startAddress = ReverseGeocodeService.withoutPincode(startAddress);
+        } else {
+          startAddress = null;
         }
-      } else if (!needsStart) {
+      } else if (startAddress != null &&
+          startAddress.isNotEmpty &&
+          startAddress.toLowerCase() != 'null') {
         startAddress = ReverseGeocodeService.withoutPincode(startAddress);
       }
 
-      if (needsEnd && item.hasValidEndCoordinates) {
+      if (item.isTrip && item.hasValidEndCoordinates) {
         final place = await ReverseGeocodeService.instance.reverse(
           item.endLatitude,
           item.endLongitude,
         );
         if (_disposed || runId != _geocodeRunId) return;
         if (place != null && place.isNotEmpty) {
-          endAddress = ReverseGeocodeService.withoutPincode(place);
+          endAddress = place;
+        } else if (endAddress != null &&
+            endAddress.isNotEmpty &&
+            endAddress.toLowerCase() != 'null' &&
+            !_looksLikeRawCoordinates(endAddress)) {
+          endAddress = ReverseGeocodeService.withoutPincode(endAddress);
+        } else {
+          endAddress = null;
         }
-      } else if (!needsEnd && endAddress != null && endAddress.isNotEmpty) {
+      } else if (endAddress != null &&
+          endAddress.isNotEmpty &&
+          endAddress.toLowerCase() != 'null') {
         endAddress = ReverseGeocodeService.withoutPincode(endAddress);
       }
 
@@ -1662,54 +1672,51 @@ class HistoryController extends GetxController {
       }
       await Future<void>.delayed(const Duration(milliseconds: 80));
     }
+
+    await _resolveMissingStopAddresses(runId: runId);
   }
 
   void _syncAddressToStopMarker(HistoryVehicleHistoryItem item, String address) {
     final markerIndex = item.mapMarkerIndex;
     if (markerIndex == null) return;
     if (markerIndex < 0 || markerIndex >= stopLocations.length) return;
-    final current = stopLocations[markerIndex].address?.trim();
-    if (current != null &&
-        current.isNotEmpty &&
-        current.toLowerCase() != 'null' &&
-        !_looksLikeRawCoordinates(current)) {
-      return;
-    }
+    // Always apply coordinate-based address so markers stay accurate.
     stopLocations[markerIndex] =
         stopLocations[markerIndex].copyWith(address: address);
   }
 
-  /// Reverse-geocode stops that only have coordinates (no API address).
+  /// Reverse-geocode stops from exact GPS coordinates (always preferred).
   Future<void> _resolveMissingStopAddresses({int? runId}) async {
     final activeRunId = runId ?? ++_geocodeRunId;
     final count = stopLocations.length;
     if (count == 0) return;
 
-    debugPrint('[History] reverse-geocoding up to $count stop locations');
+    debugPrint('[History] reverse-geocoding $count stop locations');
     for (var i = 0; i < count; i++) {
       if (_disposed || activeRunId != _geocodeRunId) return;
       if (i >= stopLocations.length) return;
 
       final stop = stopLocations[i];
-      final existing = stop.address?.trim();
-      if (existing != null &&
-          existing.isNotEmpty &&
-          existing.toLowerCase() != 'null' &&
-          !_looksLikeRawCoordinates(existing)) {
-        continue;
-      }
-
       final place = await ReverseGeocodeService.instance.reverse(
         stop.latitude,
         stop.longitude,
       );
       if (_disposed || activeRunId != _geocodeRunId) return;
-      if (place == null || place.isEmpty) continue;
       if (i >= stopLocations.length) return;
 
-      stopLocations[i] = stopLocations[i].copyWith(
-        address: ReverseGeocodeService.withoutPincode(place),
-      );
+      if (place != null && place.isNotEmpty) {
+        stopLocations[i] = stopLocations[i].copyWith(address: place);
+      } else {
+        final existing = stop.address?.trim();
+        if (existing != null &&
+            existing.isNotEmpty &&
+            existing.toLowerCase() != 'null' &&
+            !_looksLikeRawCoordinates(existing)) {
+          stopLocations[i] = stopLocations[i].copyWith(
+            address: ReverseGeocodeService.withoutPincode(existing),
+          );
+        }
+      }
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }

@@ -491,7 +491,7 @@ class HomeView extends GetView<HomeController> {
 
                     const SizedBox(width: 10),
 
-                    _buildInfoPill(Icons.speed, "${vehicle.distance} Km"),
+                    _buildInfoPill(Icons.speed, vehicle.todayKm),
                     const SizedBox(width: 6),
                     _buildInfoPill(
                       Icons.calendar_today,

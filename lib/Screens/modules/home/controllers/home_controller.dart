@@ -13,6 +13,8 @@ class Vehicle {
   final String address;
   final String speed;
   final String distance;
+  /// Today's traveled km from API `today_km`.
+  final String todayKm;
   final String validityDays;
   final bool isIgnitionOn;
   final bool isLocked;
@@ -27,6 +29,7 @@ class Vehicle {
     required this.address,
     required this.speed,
     required this.distance,
+    required this.todayKm,
     required this.validityDays,
     this.isIgnitionOn = false,
     this.isLocked = true,
@@ -67,11 +70,74 @@ class Vehicle {
               : ''),
       speed: speed.toStringAsFixed(1),
       distance: (json['distance'] ?? 0).toString(),
-      validityDays: (json['remaining_days'] ?? 0).toString(),
+      todayKm: _formatTodayKm(
+        json['today_km'] ??
+            json['total_kilometers_today'] ??
+            json['todayKm'] ??
+            json['distance'],
+      ),
+      validityDays: _daysFromExpiration(
+        json['expirationtime'] ??
+            json['expiration_time'] ??
+            json['expirationTime'],
+      ),
       isIgnitionOn: ignition,
       isLocked: json['lock'] != 0,
       deviceId: (json['imei'] ?? json['device_id'] ?? '').toString(),
     );
+  }
+
+  static String _formatTodayKm(dynamic raw) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0.0;
+    if (value == value.roundToDouble()) {
+      return '${value.toInt()} Km';
+    }
+    return '${value.toStringAsFixed(2)} Km';
+  }
+
+  /// Days between today and `expirationtime` (calendar days remaining).
+  /// Returns `0` when `expirationtime` is missing or invalid.
+  static String _daysFromExpiration(dynamic expirationRaw, {dynamic fallback}) {
+    final expiry = _parseExpirationDate(expirationRaw);
+    if (expiry == null) return '0';
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final end = DateTime(expiry.year, expiry.month, expiry.day);
+    final days = end.difference(today).inDays;
+    return days < 0 ? '0' : days.toString();
+  }
+
+  static DateTime? _parseExpirationDate(dynamic raw) {
+    if (raw == null) return null;
+    final text = raw.toString().trim();
+    if (text.isEmpty || text.toLowerCase() == 'null') return null;
+
+    final direct = DateTime.tryParse(text);
+    if (direct != null) return direct;
+
+    // Common API form: "yyyy-MM-dd HH:mm:ss"
+    final withT = DateTime.tryParse(text.replaceFirst(' ', 'T'));
+    if (withT != null) return withT;
+
+    final parts = text.split(RegExp(r'[/\-.]'));
+    if (parts.length == 3) {
+      final a = int.tryParse(parts[0]);
+      final b = int.tryParse(parts[1]);
+      final c = int.tryParse(parts[2].split(RegExp(r'\s')).first);
+      if (a != null && b != null && c != null) {
+        // yyyy-MM-dd vs dd-MM-yyyy
+        if (parts[0].length == 4) {
+          return DateTime(a, b, c);
+        }
+        if (parts[2].length == 4) {
+          return DateTime(c, b, a);
+        }
+      }
+    }
+    return null;
   }
 
   /// Aligns with live-track modes: M/R = Running, H/I = Idle, S = Stopped.

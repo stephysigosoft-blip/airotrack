@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import '../Configs/ApiConfigs.dart';
 
 /// Reverse-geocodes lat/lng to a human-readable place name via Mapbox.
+///
+/// Prefers street / POI level results so History locations stay accurate to
+/// the GPS coordinates (not a coarse Area + City + State label).
 class ReverseGeocodeService {
   ReverseGeocodeService._();
   static final ReverseGeocodeService instance = ReverseGeocodeService._();
@@ -17,10 +20,11 @@ class ReverseGeocodeService {
 
   final Map<String, String> _cache = <String, String>{};
 
+  /// ~0.1 m precision — avoids merging nearby but distinct GPS points.
   static String _cacheKey(double lat, double lng) =>
-      'v2:${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
+      'v3:${lat.toStringAsFixed(6)},${lng.toStringAsFixed(6)}';
 
-  /// Keeps area + city + state — strips pincode and country (e.g. India).
+  /// Strips postal code and country only — keeps street / area / city / state.
   static String withoutPincode(String? raw) {
     if (raw == null) return '';
     var text = raw.trim();
@@ -52,13 +56,9 @@ class ReverseGeocodeService {
         .where((p) => !_isCountry(p))
         .toList();
 
-    if (parts.length > 3) {
-      // Keep area, city, state (last three meaningful segments).
-      text =
-          '${parts[parts.length - 3]}, ${parts[parts.length - 2]}, ${parts.last}';
-    } else {
-      text = parts.join(', ');
-    }
+    // Keep all meaningful segments (street → state). Do not truncate —
+    // truncating to 3 parts was dropping the accurate street / POI label.
+    text = parts.join(', ');
 
     return text
         .replaceAll(RegExp(r'\s*,\s*,+'), ', ')
@@ -72,11 +72,45 @@ class ReverseGeocodeService {
     return blocked.contains(value.trim().toLowerCase());
   }
 
-  /// Build "Area, City, State" from Mapbox feature context.
+  /// Most specific label first: street/POI → neighborhood → city → state.
   static String? _placeFromFeature(Map<dynamic, dynamic> feature) {
+    String? street;
     String? area;
     String? city;
     String? state;
+
+    final placeTypes = feature['place_type'];
+    final types = placeTypes is List
+        ? placeTypes.map((e) => e.toString()).toList()
+        : const <String>[];
+    final primary = feature['text']?.toString().trim();
+    final houseNumber = feature['address']?.toString().trim();
+
+    if (primary != null && primary.isNotEmpty) {
+      if (types.any((t) => t == 'address')) {
+        street = (houseNumber != null && houseNumber.isNotEmpty)
+            ? '$houseNumber $primary'
+            : primary;
+      } else if (types.any((t) => t == 'poi')) {
+        street = primary;
+      } else if (types.any(
+        (t) =>
+            t == 'neighborhood' ||
+            t == 'locality' ||
+            t == 'district' ||
+            t == 'place',
+      )) {
+        if (types.any((t) => t == 'place')) {
+          city ??= primary;
+        } else {
+          area ??= primary;
+        }
+      } else if (types.any((t) => t == 'region')) {
+        state ??= primary;
+      } else {
+        street ??= primary;
+      }
+    }
 
     final context = feature['context'];
     if (context is List) {
@@ -92,7 +126,9 @@ class ReverseGeocodeService {
           continue;
         }
 
-        if (id.startsWith('region.')) {
+        if (id.startsWith('address.') || id.startsWith('street.')) {
+          street ??= name;
+        } else if (id.startsWith('region.')) {
           state ??= name;
         } else if (id.startsWith('place.')) {
           city ??= name;
@@ -104,59 +140,33 @@ class ReverseGeocodeService {
       }
     }
 
-    // Feature itself may be the area/city/poi/region.
-    final placeTypes = feature['place_type'];
-    final primary = feature['text']?.toString().trim();
-    if (primary != null && primary.isNotEmpty) {
-      final types = placeTypes is List
-          ? placeTypes.map((e) => e.toString()).toList()
-          : const <String>[];
-      if (types.any((t) => t == 'region')) {
-        state ??= primary;
-      } else if (types.any((t) => t == 'place')) {
-        city ??= primary;
-      } else if (types.any(
-        (t) =>
-            t == 'neighborhood' ||
-            t == 'locality' ||
-            t == 'district' ||
-            t == 'address' ||
-            t == 'poi',
-      )) {
-        area ??= primary;
-      } else {
-        area ??= primary;
-      }
+    final parts = <String>[];
+    void addUnique(String? value) {
+      if (value == null || value.isEmpty) return;
+      if (parts.any((p) => p.toLowerCase() == value.toLowerCase())) return;
+      parts.add(value);
     }
 
-    final parts = <String>[];
-    if (area != null && area.isNotEmpty) parts.add(area);
-    if (city != null && city.isNotEmpty && city != area) parts.add(city);
-    if (state != null &&
-        state.isNotEmpty &&
-        state != city &&
-        state != area) {
-      parts.add(state);
-    }
+    addUnique(street);
+    addUnique(area);
+    addUnique(city);
+    addUnique(state);
 
     if (parts.isNotEmpty) {
       return withoutPincode(parts.join(', '));
     }
 
+    // Fallback: full Mapbox place_name (still stripped of PIN / country).
     final placeName = feature['place_name']?.toString().trim();
     if (placeName == null || placeName.isEmpty) return null;
     return withoutPincode(placeName);
   }
 
-  /// Returns "Area, City, State" (no pincode / India), or null if lookup fails.
-  Future<String?> reverse(double latitude, double longitude) async {
-    if (!latitude.isFinite || !longitude.isFinite) return null;
-    if (latitude == 0 && longitude == 0) return null;
-
-    final key = _cacheKey(latitude, longitude);
-    final cached = _cache[key];
-    if (cached != null && cached.isNotEmpty) return withoutPincode(cached);
-
+  Future<String?> _queryMapbox(
+    double latitude,
+    double longitude, {
+    required String types,
+  }) async {
     final token = ApiConfig.mapboxAccessToken.trim();
     if (token.isEmpty ||
         token.toLowerCase().contains('your_mapbox_access_token')) {
@@ -169,19 +179,49 @@ class ReverseGeocodeService {
         '?access_token=$token'
         '&limit=1'
         '&language=en'
-        '&types=address,poi,neighborhood,locality,place,district,region';
+        '&types=$types';
+
+    final response = await _dio.get<Map<String, dynamic>>(url);
+    if (response.statusCode != 200 || response.data == null) return null;
+
+    final features = response.data!['features'];
+    if (features is! List || features.isEmpty) return null;
+
+    final first = features.first;
+    if (first is! Map) return null;
+
+    final place = _placeFromFeature(first);
+    if (place == null || place.isEmpty) return null;
+    return place;
+  }
+
+  /// Returns the most accurate place name for the coordinates, or null.
+  ///
+  /// Tries street `address` first, then broader types (POI / locality / city).
+  Future<String?> reverse(double latitude, double longitude) async {
+    if (!latitude.isFinite || !longitude.isFinite) return null;
+    if (latitude == 0 && longitude == 0) return null;
+
+    final key = _cacheKey(latitude, longitude);
+    final cached = _cache[key];
+    if (cached != null && cached.isNotEmpty) return withoutPincode(cached);
 
     try {
-      final response = await _dio.get<Map<String, dynamic>>(url);
-      if (response.statusCode != 200 || response.data == null) return null;
+      // 1) Street-level when Mapbox has an address near the point.
+      String? place = await _queryMapbox(
+        latitude,
+        longitude,
+        types: 'address',
+      );
 
-      final features = response.data!['features'];
-      if (features is! List || features.isEmpty) return null;
+      // 2) Fall back to POI / neighborhood / city so we still get a label.
+      place ??= await _queryMapbox(
+        latitude,
+        longitude,
+        types:
+            'address,poi,neighborhood,locality,place,district,region',
+      );
 
-      final first = features.first;
-      if (first is! Map) return null;
-
-      final place = _placeFromFeature(first);
       if (place == null || place.isEmpty) return null;
 
       _cache[key] = place;

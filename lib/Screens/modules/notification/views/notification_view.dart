@@ -3,6 +3,7 @@ import 'package:airotrack/Screens/routes/app_routes.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/notification_controller.dart';
+import 'widgets/notification_filter_sheet.dart';
 
 class NotificationView extends GetView<NotificationController> {
   const NotificationView({Key? key}) : super(key: key);
@@ -62,34 +63,37 @@ class NotificationView extends GetView<NotificationController> {
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 10,
+                        vertical: 14,
                       ), // Reduced vertical padding for 45px height
                       suffixIcon: Icon(Icons.search, color: Colors.grey),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
-                Container(
-                  height: 45, // Match search bar height
-                  width: 45, // Squared
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade300),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.withOpacity(0.1),
-                        spreadRadius: 1,
-                        blurRadius: 3,
-                        offset: const Offset(0, 1),
+                GestureDetector(
+                  onTap: () => showNotificationFilterSheet(context),
+                  child: Container(
+                    height: 45,
+                    width: 45,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade300),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          spreadRadius: 1,
+                          blurRadius: 3,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Image.asset(
+                        'lib/Asset/Icons/Filters.png',
+                        width: 22,
+                        height: 22,
                       ),
-                    ],
-                  ),
-                  child: Center(
-                    child: Image.asset(
-                      'lib/Asset/Icons/Filters.png',
-                      width: 22,
-                      height: 22,
                     ),
                   ),
                 ),
@@ -240,12 +244,11 @@ class NotificationView extends GetView<NotificationController> {
 
     return Container(
       width: screenWidth - 34,
-      height: 68,
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(
         horizontal: 12,
-        vertical: 8,
-      ), // Reduced padding to fit 68px height
+        vertical: 10,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12), // Radius 12
@@ -269,24 +272,30 @@ class NotificationView extends GetView<NotificationController> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      "KL 07 D 0518",
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13, // Reduced font size
-                        color: Colors.black,
+                    const Flexible(
+                      child: Text(
+                        "KL 07 D 0518",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: Colors.black,
+                          height: 1.2,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    const SizedBox(width: 8),
                     Text(
                       "Oct 17, 2025 5:38:08 PM",
                       style: TextStyle(
-                        fontSize: 9, // Reduced font size
+                        fontSize: 9,
                         color: Colors.grey[500],
+                        height: 1.2,
                       ),
                     ),
                   ],
@@ -295,14 +304,19 @@ class NotificationView extends GetView<NotificationController> {
                 Text(
                   statusText,
                   style: TextStyle(
-                    fontSize: 11, // Reduced font size
+                    fontSize: 11,
                     color: Colors.grey[600],
+                    height: 1.2,
                   ),
                 ),
                 Text(
-                  "PuthiyakavuJunction, Karunagappalli...", // Truncated text manually for better fit visual or rely on ellipsis
-                  style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-                  maxLines: 1,
+                  "PuthiyakavuJunction, Karunagappalli, Kollam, Kerala",
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey[600],
+                    height: 1.2,
+                  ),
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ],

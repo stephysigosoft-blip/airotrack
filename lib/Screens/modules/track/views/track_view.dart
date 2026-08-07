@@ -396,7 +396,7 @@ class TrackView extends GetView<TrackController> {
                               SizedBox(height: height * 0.006),
                               Obx(
                                 () => Text(
-                                  controller.displayDeviceTime,
+                                  controller.displayLastUpdate,
                                   style: TextStyle(
                                     color: Colors.black,
                                     fontSize: width * 0.028,
