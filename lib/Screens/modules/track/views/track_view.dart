@@ -5,6 +5,7 @@ import '../../../../widgets/map_widget.dart';
 import '../controllers/track_controller.dart';
 import '../../../routes/app_routes.dart';
 import 'lock_command_view.dart';
+import 'widgets/select_geofence_sheet.dart';
 
 class TrackView extends GetView<TrackController> {
   const TrackView({Key? key}) : super(key: key);
@@ -32,6 +33,8 @@ class TrackView extends GetView<TrackController> {
                 lockNorthUp: true,
                 onTap: () => controller.showBottomSheet.value = false,
                 markers: controller.mapMarkers,
+                circles: controller.vehicleGeofenceCircles,
+                polygons: controller.vehicleGeofencePolygons,
                 onPositionChanged: (position, hasGesture) {
                   // Keep a true top-down view (never tilted / spun).
                   if (position.rotation.abs() > 0.05) {
@@ -42,7 +45,7 @@ class TrackView extends GetView<TrackController> {
                     );
                   }
                   if (hasGesture) {
-                    controller.onMapGesture();
+                    controller.onUserMapGesture();
                   }
                 },
               ),
@@ -640,7 +643,15 @@ class TrackView extends GetView<TrackController> {
                           ),
                           const SizedBox(width: 18),
                           GestureDetector(
-                            onTap: () => Get.toNamed(Routes.ADD_GEOFENCE),
+                            onTap: () async {
+                              final vehicleId =
+                                  controller.resolvedVehicleId;
+                              await showSelectGeofenceSheet(
+                                context,
+                                vehicleId: vehicleId,
+                              );
+                              await controller.refreshVehicleGeofences();
+                            },
                             child: _buildActionButton(
                               "Add \n Geofence",
                               'lib/Asset/Icons/Add geofence.png',

@@ -1,11 +1,8 @@
-import 'dart:math' as math;
-
 import 'package:airotrack/Configs/ApiConfigs.dart';
 import 'package:airotrack/Utils/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:get/get.dart';
-import 'package:latlong2/latlong.dart';
 
 import '../controllers/geofence_controller.dart';
 
@@ -154,28 +151,44 @@ class SettingsAddGeofenceView extends GetView<GeofenceController> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        if (controller.submitGeofenceForm()) {
-                          Get.back();
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
-                        minimumSize: const Size.fromHeight(48),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                    child: Obx(() {
+                      final busy = controller.isSubmitting.value;
+                      return ElevatedButton(
+                        onPressed: busy
+                            ? null
+                            : () async {
+                                final ok =
+                                    await controller.submitGeofenceForm();
+                                if (ok) Get.back();
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryBlue,
+                          disabledBackgroundColor:
+                              AppColors.primaryBlue.withValues(alpha: 0.6),
+                          minimumSize: const Size.fromHeight(48),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
-                      ),
-                      child: const Text(
-                        'Submit',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
+                        child: busy
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                'Submit',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                      );
+                    }),
                   ),
                 ],
               ),
@@ -406,7 +419,7 @@ class _MapSection extends StatelessWidget {
         circles: [
           CircleMarker(
             point: center,
-            radius: 120,
+            radius: controller.circleRadiusMeters.value,
             useRadiusInMeter: true,
             color: color,
             borderStrokeWidth: 2,
@@ -416,10 +429,7 @@ class _MapSection extends StatelessWidget {
       );
     }
 
-    final points = shape == GeofenceShape.rectangle
-        ? _rectanglePoints(center, 0.0012, 0.0010)
-        : _polygonPoints(center, 0.0013);
-
+    final points = controller.shapePointsFor(center, shape);
     return PolygonLayer(
       polygons: [
         Polygon(
@@ -430,26 +440,6 @@ class _MapSection extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  List<LatLng> _rectanglePoints(LatLng c, double dLat, double dLng) {
-    return [
-      LatLng(c.latitude + dLat, c.longitude - dLng),
-      LatLng(c.latitude + dLat, c.longitude + dLng),
-      LatLng(c.latitude - dLat, c.longitude + dLng),
-      LatLng(c.latitude - dLat, c.longitude - dLng),
-    ];
-  }
-
-  List<LatLng> _polygonPoints(LatLng c, double r) {
-    const n = 5;
-    return List.generate(n, (i) {
-      final a = (2 * math.pi * i / n) - (math.pi / 2);
-      return LatLng(
-        c.latitude + r * math.cos(a),
-        c.longitude + r * math.sin(a) * 1.15,
-      );
-    });
   }
 
   Widget _mapBtn({required IconData icon, required VoidCallback onTap}) {

@@ -83,6 +83,35 @@ class GeofenceListView extends GetView<GeofenceController> {
           ),
           Expanded(
             child: Obx(() {
+              if (controller.isLoading.value && controller.geofences.isEmpty) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final err = controller.listError.value;
+              if (err.isNotEmpty && controller.geofences.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          err,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                        const SizedBox(height: 12),
+                        TextButton(
+                          onPressed: () =>
+                              controller.fetchGeofences(force: true),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
               final items = controller.filteredGeofences;
               if (items.isEmpty) {
                 return const Center(
@@ -92,13 +121,16 @@ class GeofenceListView extends GetView<GeofenceController> {
                   ),
                 );
               }
-              return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                itemCount: items.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  return _GeofenceCard(item: items[index]);
-                },
+              return RefreshIndicator(
+                onRefresh: () => controller.fetchGeofences(force: true),
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  itemCount: items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    return _GeofenceCard(item: items[index]);
+                  },
+                ),
               );
             }),
           ),
@@ -190,12 +222,11 @@ class _GeofenceCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 icon: Icon(Icons.more_vert, color: Colors.grey.shade700),
-                onSelected: (value) {
+                onSelected: (value) async {
                   if (value == 'edit') {
                     controller.prepareEdit(item);
                     Get.toNamed(Routes.SETTINGS_ADD_GEOFENCE);
                   } else if (value == 'vehicles') {
-                    controller.openUpdateVehicles(item);
                     showUpdateVehiclesSheet(context, item);
                   } else if (value == 'delete') {
                     _confirmDelete(context, controller, item);

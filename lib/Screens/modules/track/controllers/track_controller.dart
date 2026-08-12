@@ -8,8 +8,10 @@ import '../../../../Configs/ApiConfigs.dart';
 import '../../../../Models/LiveTrackModel.dart';
 import '../../../../Configs/DioClient.dart';
 import '../../../../Utils/Utils.dart';
+import '../../../../Utils/vehicle_geofence_map_overlay.dart';
 import '../../../../Services/LiveTrackWebSocketService.dart';
 import '../../../../Services/DirectionsService.dart';
+import '../../home/controllers/home_controller.dart';
 import '../../../../widgets/map_widget.dart';
 /// Live tracking flow (snapshot once + WebSocket only):
 /// 1. User selects vehicle on live track screen (IMEI from route).
@@ -35,6 +37,10 @@ class TrackController extends GetxController {
   final animatedLng = 0.0.obs;
   final animatedRotation = 0.0.obs;
   final reactiveMarkers = <Marker>[].obs;
+
+  /// Linked geofences drawn on the live map (`GET vehicle_geofences`).
+  final vehicleGeofenceCircles = <CircleMarker>[].obs;
+  final vehicleGeofencePolygons = <Polygon>[].obs;
 
   /// High-frequency glide position (does not notify GetX every frame).
   double _animLat = 0.0;
@@ -256,6 +262,9 @@ class TrackController extends GetxController {
 
       liveTrackData.value = data.toLiveTrackData();
       _syncOdometerKm(liveTrackData.value?.currentPosition?.odometer);
+      if (!reconnectOnly) {
+        unawaited(loadVehicleGeofences());
+      }
       if (reconnectOnly) {
         final pos = liveTrackData.value?.currentPosition;
         final lat = double.tryParse(pos?.latitude ?? '');
@@ -1710,6 +1719,22 @@ class TrackController extends GetxController {
     return double.tryParse(raw?.toString() ?? '');
   }
 
+  /// Called when the user manually pans/zooms the map.
+  ///
+  /// Important: do NOT apply the `_ignoreMapGestureUntil` filter here.
+  /// While locked, the camera moves very frequently and keeps extending that
+  /// ignore window, which can prevent the user from unlocking follow mode.
+  void onUserMapGesture() {
+    if (isLocked.value) {
+      isLocked.value = false;
+    }
+    _userAdjustedZoom = true;
+    _ensureNorthUp();
+  }
+
+  /// Called when we want to react to map movement that *might* be caused by
+  /// our own follow-camera moves.
+  /// (Kept for any future uses; currently Live Track uses onUserMapGesture.)
   void onMapGesture() {
     // Camera follow calls mapController.move(); flutter_map often reports those
     // as gestures. Ignoring them prevents unlock → freeze/wrong-way glitches.
@@ -1760,6 +1785,48 @@ class TrackController extends GetxController {
   }
 
   void toggleBottomSheet() => showBottomSheet.value = !showBottomSheet.value;
+
+  int? get resolvedVehicleId {
+    final fromSnapshot = liveTrackData.value?.vehicleInfo?.id;
+    if (fromSnapshot != null && fromSnapshot > 0) return fromSnapshot;
+    if (vehicleImei.value.trim().isEmpty) return null;
+    if (Get.isRegistered<HomeController>()) {
+      for (final v in Get.find<HomeController>().vehicles) {
+        if (v.deviceId.trim() == vehicleImei.value.trim()) return v.id;
+      }
+    }
+    return null;
+  }
+
+  /// GET `vehicle_geofences` — draw linked circle / rectangle / polygon on map.
+  Future<void> loadVehicleGeofences() async {
+    if (_disposed) return;
+    final vehicleId = resolvedVehicleId;
+    if (vehicleId == null || vehicleId <= 0) {
+      vehicleGeofenceCircles.clear();
+      vehicleGeofencePolygons.clear();
+      return;
+    }
+    try {
+      final response = await DioClient().get(
+        ApiEndPoints.vehicleGeofences,
+        query: {'vehicle_id': vehicleId.toString()},
+      );
+      final circles = <CircleMarker>[];
+      final polygons = <Polygon>[];
+      VehicleGeofenceMapOverlay.parseApiResponse(
+        response.data,
+        circles: circles,
+        polygons: polygons,
+      );
+      vehicleGeofenceCircles.assignAll(circles);
+      vehicleGeofencePolygons.assignAll(polygons);
+    } catch (e) {
+      debugPrint('❌ vehicle_geofences: $e');
+    }
+  }
+
+  Future<void> refreshVehicleGeofences() => loadVehicleGeofences();
 
   String get displayPlate =>
       liveTrackData.value?.vehicleInfo?.vehicleNumber ?? vehiclePlate.value;

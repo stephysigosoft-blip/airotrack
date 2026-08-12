@@ -7,9 +7,12 @@ import '../../controllers/geofence_controller.dart';
 Future<void> showUpdateVehiclesSheet(
   BuildContext context,
   GeofenceItem item,
-) {
+) async {
   final controller = Get.find<GeofenceController>();
-    return showModalBottomSheet<void>(
+  // Fire load; sheet shows spinner while waiting.
+  controller.openUpdateVehicles(item);
+
+  return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
@@ -78,7 +81,9 @@ Future<void> showUpdateVehiclesSheet(
                   alignment: Alignment.centerRight,
                   child: Obx(
                     () => GestureDetector(
-                      onTap: controller.toggleSelectAllVehicles,
+                      onTap: controller.isLoadingVehicles.value
+                          ? null
+                          : controller.toggleSelectAllVehicles,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -107,19 +112,28 @@ Future<void> showUpdateVehiclesSheet(
               ),
               Expanded(
                 child: Obx(() {
-                  final plates = controller.filteredVehiclePlates;
-                  // Force Obx to listen to RxSet changes.
-                  final selectedPlates =
-                      controller.selectedVehiclePlates.toList();
+                  if (controller.isLoadingVehicles.value) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final vehicles = controller.filteredVehicleOptions;
+                  final selectedIds = controller.selectedVehicleIds.toList();
+                  if (vehicles.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'No vehicles found',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    );
+                  }
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: plates.length,
+                    itemCount: vehicles.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 4),
                     itemBuilder: (context, index) {
-                      final plate = plates[index];
-                      final selected = selectedPlates.contains(plate);
+                      final vehicle = vehicles[index];
+                      final selected = selectedIds.contains(vehicle.id);
                       return InkWell(
-                        onTap: () => controller.toggleVehicle(plate),
+                        onTap: () => controller.toggleVehicle(vehicle.id),
                         borderRadius: BorderRadius.circular(8),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -138,7 +152,7 @@ Future<void> showUpdateVehiclesSheet(
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  plate,
+                                  vehicle.plateNumber,
                                   style: const TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
@@ -180,25 +194,41 @@ Future<void> showUpdateVehiclesSheet(
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: ElevatedButton(
-                          onPressed: () =>
-                              controller.submitVehicleUpdate(item),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryBlue,
-                            minimumSize: const Size.fromHeight(48),
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                        child: Obx(() {
+                          final busy = controller.isSyncingVehicles.value ||
+                              controller.isLoadingVehicles.value;
+                          return ElevatedButton(
+                            onPressed: busy
+                                ? null
+                                : () => controller.submitVehicleUpdate(item),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryBlue,
+                              disabledBackgroundColor:
+                                  AppColors.primaryBlue.withValues(alpha: 0.6),
+                              minimumSize: const Size.fromHeight(48),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
-                          ),
-                          child: const Text(
-                            'Submit',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
+                            child: controller.isSyncingVehicles.value
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Submit',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                          );
+                        }),
                       ),
                     ],
                   ),

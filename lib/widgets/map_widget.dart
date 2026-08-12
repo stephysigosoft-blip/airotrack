@@ -17,6 +17,8 @@ class AiroMapWidget extends StatelessWidget {
   final MapController? mapController;
   final dynamic markers;
   final dynamic polylines;
+  final dynamic circles;
+  final dynamic polygons;
   final VoidCallback? onTap;
   final void Function(MapEvent)? onMapEvent;
   final void Function(MapCamera, bool)? onPositionChanged;
@@ -33,6 +35,8 @@ class AiroMapWidget extends StatelessWidget {
     this.mapController,
     this.markers,
     this.polylines,
+    this.circles,
+    this.polygons,
     this.onTap,
     this.mapStyle = AiroMapStyle.osm,
     this.lockNorthUp = true,
@@ -59,9 +63,7 @@ class AiroMapWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final interactionFlags = lockNorthUp
-        ? (InteractiveFlag.all &
-            ~InteractiveFlag.rotate &
-            ~InteractiveFlag.pinchMove)
+        ? (InteractiveFlag.all & ~InteractiveFlag.rotate)
         : InteractiveFlag.all;
 
     return FlutterMap(
@@ -81,6 +83,34 @@ class AiroMapWidget extends StatelessWidget {
           urlTemplate: _tileUrl(),
           userAgentPackageName: 'com.airotrack.app',
           maxZoom: 22,
+        ),
+        Builder(
+          builder: (context) {
+            final pg = polygons;
+            if (pg is RxList<Polygon>) {
+              return Obx(() {
+                if (pg.isEmpty) return const SizedBox.shrink();
+                return PolygonLayer(polygons: pg.toList());
+              });
+            } else if (pg is List<Polygon> && pg.isNotEmpty) {
+              return PolygonLayer(polygons: pg);
+            }
+            return const SizedBox.shrink();
+          },
+        ),
+        Builder(
+          builder: (context) {
+            final c = circles;
+            if (c is RxList<CircleMarker>) {
+              return Obx(() {
+                if (c.isEmpty) return const SizedBox.shrink();
+                return CircleLayer(circles: c.toList());
+              });
+            } else if (c is List<CircleMarker> && c.isNotEmpty) {
+              return CircleLayer(circles: c);
+            }
+            return const SizedBox.shrink();
+          },
         ),
         Builder(
           builder: (context) {

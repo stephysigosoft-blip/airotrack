@@ -100,10 +100,10 @@ class LiveVehicleInfo {
 
   factory LiveVehicleInfo.fromJson(Map<String, dynamic> json) {
     return LiveVehicleInfo(
-      id: json['id'] as int?,
-      vehicleNumber: json['vehicle_number'] as String?,
+      id: int.tryParse(json['id']?.toString() ?? ''),
+      vehicleNumber: json['vehicle_number']?.toString(),
       imei: json['imei']?.toString(),
-      companyId: json['company_id'] as int?,
+      companyId: int.tryParse(json['company_id']?.toString() ?? ''),
       totalKilometersTraveled: json['total_kilometers_traveled']?.toString(),
     );
   }

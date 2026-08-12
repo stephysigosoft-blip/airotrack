@@ -86,9 +86,27 @@ class DioClient {
     String path, {
     dynamic body,
     Map<String, dynamic>? query,
+    Options? options,
   }) async {
     try {
-      return await dio.post(path, data: body, queryParameters: query);
+      Options? opts = options;
+      // Default Content-Type is application/json; clear it so Dio can set
+      // multipart/form-data with the correct boundary for FormData bodies.
+      if (body is FormData) {
+        final headers = Map<String, dynamic>.from(options?.headers ?? {});
+        headers.remove(Headers.contentTypeHeader);
+        headers.remove('Content-Type');
+        opts = (options ?? Options()).copyWith(
+          contentType: Headers.multipartFormDataContentType,
+          headers: headers,
+        );
+      }
+      return await dio.post(
+        path,
+        data: body,
+        queryParameters: query,
+        options: opts,
+      );
     } on DioException catch (e) {
       throw _handleError(e);
     }
