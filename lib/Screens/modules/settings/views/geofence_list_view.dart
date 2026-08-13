@@ -298,9 +298,9 @@ class _GeofenceCard extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text('Cancel')),
           TextButton(
-            onPressed: () {
-              controller.deleteGeofence(item.id);
+            onPressed: () async {
               Get.back();
+              await controller.deleteGeofence(item.id);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),

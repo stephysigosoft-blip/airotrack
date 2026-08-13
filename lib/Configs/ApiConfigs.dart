@@ -27,6 +27,8 @@ class ApiEndPoints {
   static String liveTrackSnapshot = "live_track_snapshot";
   static String updateOdometer = "update_odometer";
   static String addGeofence = "add_geofence";
+  static String updateGeofence = "update_geofence";
+  static String deleteGeofence = "delete_geofence";
   static String geofences = "geofences";
   static String geofenceSyncedVehicles = "geofence_synced_vehicles";
   static String geofenceUnsyncedVehicles = "geofence_unsynced_vehicles";

@@ -157,9 +157,7 @@ class SettingsAddGeofenceView extends GetView<GeofenceController> {
                         onPressed: busy
                             ? null
                             : () async {
-                                final ok =
-                                    await controller.submitGeofenceForm();
-                                if (ok) Get.back();
+                                await controller.submitGeofenceForm();
                               },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primaryBlue,
@@ -272,7 +270,7 @@ class _MapSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = Get.find<GeofenceController>();
-    final mapController = MapController();
+    final mapController = controller.formMapController;
 
     return SizedBox(
       height: 280,
@@ -290,6 +288,7 @@ class _MapSection extends StatelessWidget {
                     controller.mapCenter.value = pos.center;
                     controller.mapZoom.value = pos.zoom;
                   },
+                  onTap: (_, __) => controller.clearPlaceSuggestions(),
                 ),
                 children: [
                   TileLayer(
@@ -305,31 +304,112 @@ class _MapSection extends StatelessWidget {
               top: 12,
               left: 12,
               right: 12,
-              child: Container(
-                height: 42,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: controller.searchPlaceController,
-                        decoration: const InputDecoration(
-                          hintText: 'Search for a place',
-                          hintStyle:
-                              TextStyle(color: Colors.grey, fontSize: 13),
-                          border: InputBorder.none,
-                          isDense: true,
-                        ),
-                      ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    height: 42,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: Colors.grey.shade300),
                     ),
-                    Icon(Icons.search, color: Colors.grey.shade400),
-                  ],
-                ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: controller.searchPlaceController,
+                            textInputAction: TextInputAction.search,
+                            onSubmitted: (v) => controller.searchPlaces(v),
+                            onTap: () {
+                              if (controller.placeSuggestions.isNotEmpty) {
+                                controller.showPlaceSuggestions.value = true;
+                              }
+                            },
+                            decoration: const InputDecoration(
+                              hintText: 'Search for a place',
+                              hintStyle:
+                                  TextStyle(color: Colors.grey, fontSize: 13),
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        Obx(() {
+                          if (controller.isSearchingPlace.value) {
+                            return const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            );
+                          }
+                          return Icon(Icons.search, color: Colors.grey.shade400);
+                        }),
+                      ],
+                    ),
+                  ),
+                  Obx(() {
+                    if (!controller.showPlaceSuggestions.value ||
+                        controller.placeSuggestions.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Container(
+                      margin: const EdgeInsets.only(top: 6),
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 6,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: ListView.separated(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: controller.placeSuggestions.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: Colors.grey.shade200),
+                        itemBuilder: (context, index) {
+                          final place = controller.placeSuggestions[index];
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(
+                              Icons.place_outlined,
+                              size: 18,
+                              color: Colors.grey.shade600,
+                            ),
+                            title: Text(
+                              place.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              place.address,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                            onTap: () =>
+                                controller.selectPlaceSuggestion(place),
+                          );
+                        },
+                      ),
+                    );
+                  }),
+                ],
               ),
             ),
             Positioned(

@@ -3,9 +3,11 @@ import 'dart:math' as math;
 
 import 'package:airotrack/Configs/ApiConfigs.dart';
 import 'package:airotrack/Configs/DioClient.dart';
+import 'package:airotrack/Services/PlaceSearchService.dart';
 import 'package:airotrack/Utils/Utils.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:get/get.dart' hide FormData, MultipartFile, Response;
 import 'package:latlong2/latlong.dart';
 
@@ -221,6 +223,7 @@ class GeofenceController extends GetxController {
   final mapZoom = 15.0.obs;
   final fenceNameError = RxnString();
   final isSubmitting = false.obs;
+  final isDeleting = false.obs;
 
   /// Circle radius in meters (map overlay + API conversion).
   final circleRadiusMeters = 120.0.obs;
@@ -230,7 +233,14 @@ class GeofenceController extends GetxController {
   final descriptionController = TextEditingController();
   final searchPlaceController = TextEditingController();
 
+  /// Add/Edit geofence map — shared so place search can move the camera.
+  final formMapController = MapController();
+  final placeSuggestions = <PlaceSearchResult>[].obs;
+  final isSearchingPlace = false.obs;
+  final showPlaceSuggestions = false.obs;
+
   Worker? _searchWorker;
+  int _placeSearchSeq = 0;
 
   static const eventTypes = ['Entry', 'Exit', 'Both'];
   static const tolerances = [5, 10, 15, 20, 30, 50];
@@ -336,6 +346,77 @@ class GeofenceController extends GetxController {
       (_) => fetchGeofences(),
       time: const Duration(milliseconds: 450),
     );
+    searchPlaceController.addListener(_onPlaceSearchTextChanged);
+  }
+
+  void _onPlaceSearchTextChanged() {
+    final q = searchPlaceController.text.trim();
+    if (q.length < 2) {
+      ++_placeSearchSeq;
+      placeSuggestions.clear();
+      showPlaceSuggestions.value = false;
+      isSearchingPlace.value = false;
+      return;
+    }
+    final seq = ++_placeSearchSeq;
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (seq != _placeSearchSeq) return;
+      searchPlaces(searchPlaceController.text);
+    });
+  }
+
+  Future<void> searchPlaces(String query) async {
+    final q = query.trim();
+    if (q.length < 2) {
+      placeSuggestions.clear();
+      showPlaceSuggestions.value = false;
+      return;
+    }
+
+    final seq = ++_placeSearchSeq;
+    isSearchingPlace.value = true;
+    try {
+      final results = await PlaceSearchService.instance.search(
+        q,
+        proximity: mapCenter.value,
+      );
+      if (seq != _placeSearchSeq) return;
+      placeSuggestions.assignAll(results);
+      showPlaceSuggestions.value = results.isNotEmpty;
+    } finally {
+      if (seq == _placeSearchSeq) {
+        isSearchingPlace.value = false;
+      }
+    }
+  }
+
+  void selectPlaceSuggestion(PlaceSearchResult place) {
+    ++_placeSearchSeq;
+    placeSuggestions.clear();
+    showPlaceSuggestions.value = false;
+    searchPlaceController.removeListener(_onPlaceSearchTextChanged);
+    searchPlaceController.text = place.name;
+    searchPlaceController.addListener(_onPlaceSearchTextChanged);
+
+    mapCenter.value = place.location;
+    if (mapZoom.value < 14) {
+      mapZoom.value = 15;
+    }
+    try {
+      formMapController.move(place.location, mapZoom.value);
+    } catch (_) {
+      // Map may not be ready yet; mapCenter still updates overlay center.
+    }
+
+    if (addressController.text.trim().isEmpty) {
+      addressController.text = place.address;
+    }
+  }
+
+  void clearPlaceSuggestions() {
+    ++_placeSearchSeq;
+    placeSuggestions.clear();
+    showPlaceSuggestions.value = false;
   }
 
   /// GET `geofences?limit=&keyword=`
@@ -404,6 +485,7 @@ class GeofenceController extends GetxController {
     addressController.clear();
     descriptionController.clear();
     searchPlaceController.clear();
+    clearPlaceSuggestions();
   }
 
   void prepareEdit(GeofenceItem item) {
@@ -421,24 +503,60 @@ class GeofenceController extends GetxController {
     fenceNameController.text = item.name;
     addressController.text = item.address;
     descriptionController.text = item.description;
+    searchPlaceController.clear();
+    clearPlaceSuggestions();
     mapCenter.value = item.center;
     circleRadiusMeters.value =
         item.radiusMeters > 0 ? item.radiusMeters : 120;
   }
 
-  /// Local-only delete (no delete API).
-  bool deleteGeofence(String id) {
-    geofences.removeWhere((g) => g.id == id);
-    Get.snackbar(
-      'Deleted',
-      'Geofence removed',
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.black87,
-      colorText: Colors.white,
-      margin: const EdgeInsets.all(12),
-      duration: const Duration(seconds: 2),
-    );
-    return true;
+  /// POST `delete_geofence` with form field `id`.
+  Future<bool> deleteGeofence(String id) async {
+    if (isDeleting.value) return false;
+    isDeleting.value = true;
+    try {
+      final formData = FormData();
+      formData.fields.add(MapEntry('id', id));
+
+      final response = await DioClient().post(
+        ApiEndPoints.deleteGeofence,
+        body: formData,
+      );
+
+      final raw = response.data;
+      final ok = raw is Map
+          ? (raw['status'] == true || raw['success'] == true)
+          : response.statusCode == 200;
+
+      if (!ok) {
+        final msg = raw is Map
+            ? (raw['message']?.toString() ?? 'Failed to delete geofence')
+            : 'Failed to delete geofence';
+        showErrorMessage(msg);
+        return false;
+      }
+
+      geofences.removeWhere((g) => g.id == id);
+      _syncedIdsOverrideByGeofence.remove(id);
+      _baselineSyncedIdsByGeofence.remove(id);
+
+      Get.snackbar(
+        'Deleted',
+        (raw is Map ? raw['message']?.toString() : null) ??
+            'Geofence removed',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.black87,
+        colorText: Colors.white,
+        margin: const EdgeInsets.all(12),
+        duration: const Duration(seconds: 2),
+      );
+      return true;
+    } catch (e) {
+      showErrorMessage(e);
+      return false;
+    } finally {
+      isDeleting.value = false;
+    }
   }
 
   /// Loads synced + unsynced vehicles, merges list, pre-selects synced.
@@ -799,6 +917,7 @@ class GeofenceController extends GetxController {
     required String name,
     required String address,
     required String description,
+    String? id,
   }) {
     final shape = selectedShape.value;
     final center = mapCenter.value;
@@ -808,6 +927,9 @@ class GeofenceController extends GetxController {
       formData.fields.add(MapEntry(key, value));
     }
 
+    if (id != null && id.isNotEmpty) {
+      field('id', id);
+    }
     field('name', name);
     field('type', shape.apiType);
     field('tolerance', _toleranceForApi(selectedTolerance.value));
@@ -850,7 +972,7 @@ class GeofenceController extends GetxController {
     return formData;
   }
 
-  /// Create uses API; Edit is local-only (no update API).
+  /// Create → `add_geofence`; Edit → `update_geofence` (+ `id`).
   Future<bool> submitGeofenceForm() async {
     final name = fenceNameController.text.trim();
     if (name.isEmpty) {
@@ -864,12 +986,11 @@ class GeofenceController extends GetxController {
         : addressController.text.trim();
     final description = descriptionController.text.trim();
 
-    if (isEditing.value) {
-      return _submitLocalEdit(
-        name: name,
-        address: address,
-        description: description,
-      );
+    final editing = isEditing.value;
+    final geofenceId = editingId.value?.trim();
+    if (editing && (geofenceId == null || geofenceId.isEmpty)) {
+      showErrorMessage('Geofence id missing for update');
+      return false;
     }
 
     if (isSubmitting.value) return false;
@@ -877,11 +998,12 @@ class GeofenceController extends GetxController {
 
     try {
       final response = await DioClient().post(
-        ApiEndPoints.addGeofence,
+        editing ? ApiEndPoints.updateGeofence : ApiEndPoints.addGeofence,
         body: _buildGeofenceFormData(
           name: name,
           address: address,
           description: description,
+          id: editing ? geofenceId : null,
         ),
       );
 
@@ -892,18 +1014,31 @@ class GeofenceController extends GetxController {
 
       if (!ok) {
         final msg = raw is Map
-            ? (raw['message']?.toString() ?? 'Failed to create geofence')
-            : 'Failed to create geofence';
+            ? (raw['message']?.toString() ??
+                (editing
+                    ? 'Failed to update geofence'
+                    : 'Failed to create geofence'))
+            : (editing
+                ? 'Failed to update geofence'
+                : 'Failed to create geofence');
         showErrorMessage(msg);
         return false;
       }
 
       await fetchGeofences(force: true);
 
+      final message = (raw is Map ? raw['message']?.toString() : null) ??
+          (editing ? 'Geofence updated' : 'Geofence created');
+
+      // Snackbar must not be open when leaving — Get.back() would dismiss
+      // the snackbar instead of popping this screen.
+      if (Get.isSnackbarOpen) {
+        Get.closeAllSnackbars();
+      }
+      Get.back();
       Get.snackbar(
         'Success',
-        (raw is Map ? raw['message']?.toString() : null) ??
-            'Geofence created',
+        message,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.green,
         colorText: Colors.white,
@@ -919,52 +1054,15 @@ class GeofenceController extends GetxController {
     }
   }
 
-  bool _submitLocalEdit({
-    required String name,
-    required String address,
-    required String description,
-  }) {
-    final index = geofences.indexWhere((g) => g.id == editingId.value);
-    if (index < 0) return true;
-
-    final existing = geofences[index];
-    final shape = selectedShape.value;
-    final center = mapCenter.value;
-    geofences[index] = existing.copyWith(
-      name: name,
-      address: address,
-      shape: shape,
-      center: center,
-      radiusMeters: circleRadiusMeters.value,
-      coordinates: shape == GeofenceShape.circle
-          ? const []
-          : shape == GeofenceShape.rectangle
-              ? rectangleApiCorners(center)
-              : _polygonPoints(center),
-      eventType: selectedEventType.value,
-      description: description,
-      tolerance: selectedTolerance.value,
-    );
-
-    Get.snackbar(
-      'Updated',
-      'Geofence updated',
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.green,
-      colorText: Colors.white,
-      margin: const EdgeInsets.all(12),
-      duration: const Duration(seconds: 2),
-    );
-    return true;
-  }
-
   @override
   void onClose() {
     _searchWorker?.dispose();
+    searchPlaceController.removeListener(_onPlaceSearchTextChanged);
     fenceNameController.dispose();
     addressController.dispose();
     descriptionController.dispose();
     searchPlaceController.dispose();
+    formMapController.dispose();
     super.onClose();
   }
 }
