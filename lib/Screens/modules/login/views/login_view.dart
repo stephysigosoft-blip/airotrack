@@ -123,30 +123,30 @@ class LoginView extends GetView<LoginController> {
                     ),
                   ),
                 ),
-                  SizedBox(height: height * 0.05),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Don't have an account? ",
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: width * 0.035,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => Get.toNamed(Routes.REGISTER),
-                        child: Text(
-                          'Sign up',
-                          style: TextStyle(
-                            color: AppColors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: width * 0.035,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  // SizedBox(height: height * 0.05),
+                  // Row(
+                  //   mainAxisAlignment: MainAxisAlignment.center,
+                  //   children: [
+                  //     Text(
+                  //       "Don't have an account? ",
+                  //       style: TextStyle(
+                  //         color: Colors.black,
+                  //         fontSize: width * 0.035,
+                  //       ),
+                  //     ),
+                  //     GestureDetector(
+                  //       onTap: () => Get.toNamed(Routes.REGISTER),
+                  //       child: Text(
+                  //         'Sign up',
+                  //         style: TextStyle(
+                  //           color: AppColors.white,
+                  //           fontWeight: FontWeight.bold,
+                  //           fontSize: width * 0.035,
+                  //         ),
+                  //       ),
+                  //     ),
+                  //   ],
+                  // ),
                   SizedBox(height: height * 0.025),
                 ],
               ),
