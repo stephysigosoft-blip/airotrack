@@ -408,9 +408,12 @@ class GeofenceController extends GetxController {
       // Map may not be ready yet; mapCenter still updates overlay center.
     }
 
-    if (addressController.text.trim().isEmpty) {
-      addressController.text = place.address;
-    }
+    final nextAddress =
+        place.address.trim().isNotEmpty ? place.address.trim() : place.name;
+    addressController.text = nextAddress;
+    addressController.selection = TextSelection.collapsed(
+      offset: nextAddress.length,
+    );
   }
 
   void clearPlaceSuggestions() {

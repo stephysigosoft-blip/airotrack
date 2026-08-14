@@ -165,7 +165,7 @@ class _GeofenceCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Wrap(
@@ -215,13 +215,22 @@ class _GeofenceCard extends StatelessWidget {
               ),
               PopupMenuButton<String>(
                 padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
+                splashRadius: 18,
                 offset: const Offset(0, 36),
                 color: const Color(0xFF2B2B2B),
                 elevation: 4,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
-                icon: Icon(Icons.more_vert, color: Colors.grey.shade700),
+                icon: Icon(
+                  Icons.more_vert,
+                  size: 22,
+                  color: Colors.grey.shade700,
+                ),
                 onSelected: (value) async {
                   if (value == 'edit') {
                     controller.prepareEdit(item);
@@ -240,7 +249,13 @@ class _GeofenceCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: Colors.grey.shade50,
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Icon(Icons.location_on, size: 16, color: Colors.grey.shade500),
